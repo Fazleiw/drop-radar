@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drop Radar: pre-token protocols priced against their trading peers</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot" aria-hidden="true"></span><b>Drop Radar</b><span class="sub">pre-token protocols, priced against the peers whose tokens already trade</span></div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="board">Board</button>
+    <button role="tab" data-view="peers">Trading peers</button>
+    <button role="tab" data-view="model">Model</button>
+  </nav>
+</header>
+<section class="kpis" id="kpis" aria-label="Summary"></section>
+<main id="app" tabindex="-1"></main>
+<aside id="detail" class="detail" hidden aria-label="Protocol detail"></aside>
+<footer class="foot" id="foot"></footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
