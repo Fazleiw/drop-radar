@@ -101,14 +101,14 @@
     'Trading': { verb: 'Deposit {D} on {N} on {C} and trade it in 5 small round trips at 1x (fees under 0.3% of the deposit)', tx: 6, weeks: 6, mid: 'make 3 more round trips and, if the app has one, add {Q} to its liquidity vault' },
     'RWA & stables': { verb: 'Subscribe {D} to {N}\'s main product on {C} after checking its minimum ticket and redemption window', tx: 2, weeks: 8, mid: 're-read the product page and confirm the position accrues; redeem nothing early' },
     'Staking': { verb: 'Stake {D} through {N}\'s own interface on {C}, choosing the option with no lock-up or the shortest one', tx: 2, weeks: 8, mid: 'claim or restake any reward once, a second dated action' },
-    'Infra & chains': { verb: 'Bridge {D} onto {N} ({C}) and use 3 of its own apps: a swap, a lend and a liquidity position', tx: 6, weeks: 6, mid: 'repeat one swap and one deposit so activity spans more than one week' },
+    'Infra & chains': { verb: 'Bridge {D} onto {N}{OC} and use 3 of its own apps: a swap, a lend and a liquidity position', tx: 6, weeks: 6, mid: 'repeat one swap and one deposit so activity spans more than one week' },
     'Other': { verb: 'Use {N}\'s core product on {C} with {D}: one deposit or action now', tx: 3, weeks: 6, mid: 'repeat the core action once so the address shows two dates' },
   };
 
   function farmPlan(r) {
     var D = r.tvl < 20e6 ? 1000 : 2000;
     var cc = cheapestChain(r.chains), g = cc.gas, pb = PLAY[r.family], W = pb.weeks;
-    var fill = function (s) { return s.replace(/\{D\}/g, money(D)).replace(/\{Q\}/g, money(D / 4)).replace(/\{N\}/g, r.name).replace(/\{C\}/g, cc.chain); };
+    var fill = function (s) { return s.replace(/\{OC\}/g, cc.chain === r.name ? '' : ' (' + cc.chain + ')').replace(/\{D\}/g, money(D)).replace(/\{Q\}/g, money(D / 4)).replace(/\{N\}/g, r.name).replace(/\{C\}/g, cc.chain); };
     var stop = Math.round(r.tvl * (1 - Math.max(0.1, Math.abs(r.ch7 || 0) * 2 / 100)));
     var kyc = r.family === 'RWA & stables', d1 = kyc ? 3 : 1;
     // at: the day a step falls on (weekly: every held week; neither: it fires only on an event).
@@ -230,7 +230,9 @@
     rows.forEach(function (r, i) { r.rlo = Math.round(quantile(seen[i], 0.1)); r.rhi = Math.round(quantile(seen[i], 0.9)); r.plan = farmPlan(r); });
 
     var peersOf = function (r) {
-      return pts.filter(function (p) { return p.fam === r.family; })
+      // nearest by TVL among the family's peers inside the middle of its multiples, so one outlier never reads as the evidence
+      var ms = pts.filter(function (p) { return p.fam === r.family; }).map(function (p) { return p.mcap / p.tvl; }), lo = quantile(ms, 0.1), hi = quantile(ms, 0.9);
+      return pts.filter(function (p) { return p.fam === r.family && p.mcap / p.tvl >= lo && p.mcap / p.tvl <= hi; })
         .sort(function (a, b) { return Math.abs(a.x - L(r.tvl / 1e8)) - Math.abs(b.x - L(r.tvl / 1e8)); }).slice(0, 3)
         .map(function (p) { return { name: p.name, symbol: p.symbol, tvl: p.tvl, mcap: p.mcap }; });
     };

@@ -1,7 +1,5 @@
-// Drop Radar page: recomputes the whole board in the browser with model.js (DropRadar.buildRadar on the
-// sealed snapshot in ../data.js), checks it against board.json row by row, and renders the board with its
-// radar sweep, a detail view per protocol, the farm portfolio planner and the method. State lives in the
-// URL hash, so every view is linkable.
+// Drop Radar page: reruns model.js on the sealed snapshot (../data.js), checks it against board.json row by
+// row, and renders the board, its radar sweep, a detail view per protocol and the planner. State: the URL hash.
 (function () {
   'use strict';
   var M = window.DropRadar, R = M.buildRadar(window.SNAPSHOT), B = window.BOARD;
@@ -45,7 +43,7 @@
     app.querySelectorAll('[data-fam]').forEach(function (el) { el.onclick = function () { go({ view: 'board', fam: S.fam === el.dataset.fam ? '' : el.dataset.fam }); }; });
   }
 
-  // ------------------------------------------------------------ the radar sweep
+  // ---- the radar sweep
   // Angle: family sector (sized by its row count); inside a sector, the 7-day TVL change, shrinking to growing.
   // Radius: log implied value. Dot area: TVL. Colour: farm verdict. Ring: on the watchlist.
   function sweep(hl) {
@@ -55,15 +53,17 @@
     var rad = function (v) { return r0 + (L(v) - L(vmin)) / (L(vmax) - L(vmin)) * (r1 - r0); };
     var pt = function (a, rr) { return (c + rr * Math.sin(a)).toFixed(1) + ',' + (c - rr * Math.cos(a)).toFixed(1); };
     var fams = M.FAMILIES.map(function (f) { return { f: f, n: R.rows.filter(function (r) { return r.family === f; }).length }; }).filter(function (x) { return x.n; });
-    var tot = fams.reduce(function (s, x) { return s + x.n + 10; }, 0), a = gap / 2, sec = {};
-    var s = '<svg viewBox="-70 -6 ' + (W + 140) + ' ' + (W + 12) + '" class="sweep" role="img" aria-label="Radar of every protocol that records no token"><defs><radialGradient id="glow"><stop offset="0" stop-color="#3fe0c0" stop-opacity=".10"/><stop offset="1" stop-color="#3fe0c0" stop-opacity="0"/></radialGradient></defs>';
+    var tot = fams.reduce(function (s, x) { return s + x.n + 10; }, 0), a = gap / 2, sec = {}, famBox = [];
+    var s = '<svg viewBox="-90 -20 ' + (W + 180) + ' ' + (W + 40) + '" class="sweep" role="img" aria-label="Radar of every protocol that records no token"><defs><radialGradient id="glow"><stop offset="0" stop-color="#3fe0c0" stop-opacity=".10"/><stop offset="1" stop-color="#3fe0c0" stop-opacity="0"/></radialGradient></defs>';
     s += '<circle cx="' + c + '" cy="' + c + '" r="' + r1 + '" fill="url(#glow)"/>';
     fams.forEach(function (x, i) {
       var span = (2 * Math.PI - gap) * (x.n + 10) / tot, a1 = a + span, mid = a + span / 2;
       sec[x.f] = [a, a1];
       s += '<path class="sec' + (i % 2 ? ' alt' : '') + (S.fam === x.f ? ' on' : '') + '" d="M' + pt(a, r0) + 'L' + pt(a, r1) + 'A' + r1 + ',' + r1 + ' 0 ' + (span > Math.PI ? 1 : 0) + ' 1 ' + pt(a1, r1) + 'L' + pt(a1, r0) + 'A' + r0 + ',' + r0 + ' 0 ' + (span > Math.PI ? 1 : 0) + ' 0 ' + pt(a, r0) + 'Z"/>';
-      var lx = c + (r1 + 14) * Math.sin(mid), ly = c - (r1 + 14) * Math.cos(mid), anc = Math.abs(Math.sin(mid)) < 0.2 ? 'middle' : Math.sin(mid) > 0 ? 'start' : 'end';
-      s += '<text class="fam" data-fam="' + esc(x.f) + '" x="' + lx.toFixed(1) + '" y="' + (ly + 4 + (Math.cos(mid) < -0.9 ? 6 : 0)).toFixed(1) + '" text-anchor="' + anc + '">' + esc(x.f) + ' <tspan>' + x.n + '</tspan></text>';
+      var lx = c + (r1 + 22) * Math.sin(mid), ly = c - (r1 + 22) * Math.cos(mid), anc = Math.abs(Math.sin(mid)) < 0.2 ? 'middle' : Math.sin(mid) > 0 ? 'start' : 'end';
+      var fy = ly + 4 + (Math.cos(mid) < -0.9 ? 6 : 0), fw = (x.f.length + 4) * 8.2;
+      famBox.push({ x0: anc === 'start' ? lx : anc === 'end' ? lx - fw : lx - fw / 2, x1: anc === 'start' ? lx + fw : anc === 'end' ? lx : lx + fw / 2, y: fy });
+      s += '<text class="fam" data-fam="' + esc(x.f) + '" x="' + lx.toFixed(1) + '" y="' + fy.toFixed(1) + '" text-anchor="' + anc + '">' + esc(x.f) + ' <tspan>' + x.n + '</tspan></text>';
       a = a1;
     });
     [2e6, 5e6, 1e7, 2e7, 5e7].forEach(function (v) {
@@ -83,7 +83,12 @@
     });
     labels.sort(function (p, q) { return p.y - q.y; }).forEach(function (l, i, all) {
       var right = l.x >= c, ty = l.y + 3.5;
-      for (var j = 0; j < i; j++) if (Math.abs(all[j].ty - ty) < 11 && (all[j].x >= c) === right) ty = all[j].ty + 11;
+      var w = l.r.name.length * 7.5, lx0 = right ? l.x + l.d + 4 : l.x - l.d - 4 - w, lx1 = lx0 + w;
+      var hit = function (y) {
+        for (var j = 0; j < i; j++) if ((all[j].x >= c) === right && Math.abs(all[j].ty - y) < 14) return true;
+        return famBox.some(function (f) { return Math.abs(f.y - y) < 15 && lx1 > f.x0 && lx0 < f.x1; });
+      };
+      for (var k = 1; hit(ty) && k < 40; k++) ty = l.y + 3.5 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 14;
       l.ty = ty;
       s += '<text class="lab" x="' + (l.x + (right ? l.d + 4 : -l.d - 4)).toFixed(1) + '" y="' + ty.toFixed(1) + '" text-anchor="' + (right ? 'start' : 'end') + '">' + (hl ? '' : l.r.rank + ' ') + esc(l.r.name.length > 18 ? l.r.name.slice(0, 17) + '…' : l.r.name) + '</text>';
     });
@@ -91,7 +96,7 @@
       '<div class="legend">Out from the centre = implied value (log) &middot; around each family sector = 7-day TVL change, shrinking &rarr; growing (clockwise)</div>';
   }
 
-  // ------------------------------------------------------------ the board
+  // ---- the board
   function kpis() {
     var w = R.rows.filter(function (r) { return r.watch; }).length, worth = R.rows.filter(function (r) { return r.plan.verdict === 'Worth farming'; }).length;
     var o = R.oos;
@@ -109,7 +114,7 @@
     var c = R.fit.curve, o = R.oos;
     return '<section class="card"><h3>How a value is built <code>buildRadar()</code></h3><ol class="how">' +
       '<li><b class="k-tvl">Size curve</b> on <b>TVL</b> <code>fitCurve()</code>: log10 value = ' + c.a.toFixed(2) + ' + ' + c.b.toFixed(3) + ' &times; log10(TVL / $100M), least squares on the ' + R.traded.length + ' protocols whose token trades</li>' +
-      '<li><b>&times; family tilt</b> <code>fitTilts()</code>: median residual of the family\'s traded peers, shrunk with ' + R.cfg.shrink_k + ' pseudo-peers</li>' +
+      '<li><b>&times; family tilt</b> <code>fitTilts()</code>: median residual of the family\'s traded peers, shrunk with ' + R.cfg.shrink_k + ' pseudo-peers: ' + M.FAMILIES.map(function (f) { return esc(f) + ' &times;' + Math.pow(10, R.fit.tilts[f].log).toFixed(2) + ' (' + R.fit.tilts[f].peers + ')'; }).join(', ') + '</li>' +
       '<li><b class="k-g">&times; momentum</b> on <b>7-day growth</b>: 1 + ' + R.cfg.growth_weight + ' &times; 7-day TVL change, held to ' + R.cfg.growth_lo + '%..+' + R.cfg.growth_hi + '%</li>' +
       '<li><b class="k-d">&times; seasoning</b> on <b>days with no token</b>: ' + R.cfg.season_lo + ' + ' + R.cfg.season_span + ' &times; days tracked / ' + R.cfg.season_days + ' (unknown: ' + R.cfg.season_unknown + ')</li></ol>' +
       '<p class="mute">Out of sample <code>outOfSample()</code>: each of the ' + o.n + ' traded tokens refit without itself misses by a median <b>&times;' + o.median_miss.toFixed(2) + '</b> (one flat mcap/TVL multiple: &times;' + o.flat_miss.toFixed(2) + '); ' + Math.round(o.within3 * 100) + '% within 3&times;. Band: P25&ndash;P75 of residuals; rank range: P10&ndash;P90 of ' + R.cfg.boot + ' seeded refits.</p></section>';
@@ -190,7 +195,7 @@
     app.querySelector('#anch').onchange = function (e) { go({ anchors: e.target.checked ? '1' : '' }); };
   }
 
-  // ------------------------------------------------------------ the portfolio planner
+  // ---- the portfolio planner
   var span = function (a) { return a.length > 1 ? a[0] + '&ndash;' + a[a.length - 1] : String(a[0]); };
 
   function planner() {
@@ -222,7 +227,7 @@
     app.querySelectorAll('[data-in]').forEach(function (el) { el.onchange = function () { var x = {}; x[el.dataset.in] = el.value > 0 ? String(+el.value) : ''; go(x); }; });
   }
 
-  // ------------------------------------------------------------ one protocol
+  // ---- one protocol
   function timeline(plan) {
     var W = 540, days = plan.weeks * 7, x = function (d) { return 22 + d / days * (W - 50); }, last = -1e9;
     var s = '<svg viewBox="0 0 ' + W + ' 66" class="tl"><line x1="22" x2="' + (W - 28) + '" y1="18" y2="18"/>';
@@ -255,34 +260,10 @@
       '<ul class="rules"><li>One wallet, your own funds; never split one position across wallets.</li><li>Claim only through the domain bookmarked on day 0.</li><li>A launch is not promised: this is cost arithmetic and the model\'s claim.</li></ul></section></div>';
   }
 
-  // ------------------------------------------------------------ method
-  function scatter() {
-    var W = 330, H = 170, x0 = 6, x1 = 11, y0 = 3, y1 = 11;
-    var px = function (v) { return 30 + (L(v) - x0) / (x1 - x0) * (W - 40); };
-    var py = function (v) { return H - 20 - (L(v) - y0) / (y1 - y0) * (H - 30); };
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Market cap or implied value against TVL">';
-    [7, 8, 9, 10].forEach(function (e) { var x = px(Math.pow(10, e)); s += '<line class="grid" x1="' + x + '" x2="' + x + '" y1="8" y2="' + (H - 20) + '"/><text class="ax" x="' + x + '" y="' + (H - 6) + '">' + usd(Math.pow(10, e)) + '</text>'; });
-    [5, 7, 9].forEach(function (e) { var y = py(Math.pow(10, e)); s += '<line class="grid" x1="30" x2="' + (W - 10) + '" y1="' + y + '" y2="' + y + '"/><text class="ax" x="2" y="' + (y + 3) + '">' + usd(Math.pow(10, e)) + '</text>'; });
-    R.traded.forEach(function (p) { s += '<circle class="tr" cx="' + px(p.tvl).toFixed(1) + '" cy="' + py(Math.max(p.mcap, 1e3)).toFixed(1) + '" r="2.2"/>'; });
-    R.rows.forEach(function (r) { s += '<rect class="pre" x="' + (px(r.tvl) - 2).toFixed(1) + '" y="' + (py(r.implied) - 2).toFixed(1) + '" width="4" height="4"/>'; });
-    var c = R.fit.curve, f = function (t) { return Math.pow(10, c.a + c.b * L(t / 1e8)); };
-    s += '<line class="fitl" x1="' + px(1e7) + '" y1="' + py(f(1e7)) + '" x2="' + px(1e11) + '" y2="' + py(f(1e11)) + '"/></svg>';
-    return s + '<div class="legend"><i class="dot-tr"></i> trades (mcap) <i class="dot-pre"></i> records no token, at implied value <i class="dot-fit"></i> fitted size curve</div>';
-  }
-
-  function method() {
-    var t = R.fit.tilts;
-    app.innerHTML = '<section class="cards">' + howCard() + '<div class="card chart"><h3>Market cap or implied value vs TVL</h3>' + scatter() + '</div>' +
-      '<div class="card"><h3>Family tilts <code>fitTilts()</code></h3><table class="mini"><thead><tr><th>Family</th><th class="num">Traded peers</th><th class="num">Tilt</th><th class="num">Ranked</th></tr></thead><tbody>' +
-      M.FAMILIES.map(function (fm) { return '<tr><td>' + esc(fm) + '</td><td class="num">' + t[fm].peers + '</td><td class="num">&times;' + Math.pow(10, t[fm].log).toFixed(2) + '</td><td class="num">' + R.rows.filter(function (r) { return r.family === fm; }).length + '</td></tr>'; }).join('') + '</tbody></table></div></section>' +
-      '<section class="card"><h3>Model ' + esc(R.cfg.version) + ': one function, every row</h3><p>This page ran <code>DropRadar.buildRadar()</code> from model.js on the sealed snapshot and matched board.json row by row (' + matched + '/' + B.rows.length + '), and <code>planPortfolio()</code> against its default plan. No protocol name appears in the model. The ' + R.traded.length + ' protocols with a market cap price the curve and are never ranked; below the floor the house rule (all but the TVL floor) sets aside ' + R.set_aside + ' wrapped, staked, bridged and exchange products.</p>' +
-      '<p><b>Farm verdict.</b> Worth farming when break-even odds &le; ' + Math.round(R.cfg.worth * 100) + '%, Marginal &le; ' + Math.round(R.cfg.marginal * 100) + '%, else Skip. Costs: a per-chain gas table, $1 per bridge leg, ' + Math.round(R.cfg.tbill * 100) + '% a year forgone; deposit $2,000 ($1,000 under $20M TVL). <b>Portfolio.</b> Deposits scale with the budget, capped at ' + M.PF.tvl_cap * 100 + '% of a protocol\'s TVL; a part-filled position is kept only while its own break-even odds stay &le; ' + Math.round(R.cfg.marginal * 100) + '%.</p></section>';
-  }
-
   function render() {
     document.querySelectorAll('.tabs button').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.view === S.view && !S.p)); b.onclick = function () { go({ view: b.dataset.view, p: '' }); }; });
     var r = S.p && bySlug[S.p];
-    if (r) detail(r); else if (S.view === 'method') method(); else if (S.view === 'plan') planner(); else board();
+    if (r) detail(r); else if (S.view === 'plan') planner(); else board();
     var back = app.querySelector('.back'); if (back) back.onclick = function (e) { e.preventDefault(); go({ p: '' }); };
     window.scrollTo(0, 0);
   }

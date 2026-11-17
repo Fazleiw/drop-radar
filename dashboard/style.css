@@ -35,20 +35,15 @@ main{padding:12px 22px 18px}
 .card h3{margin:0 0 7px;font-size:13px;letter-spacing:.2px}
 .card p{margin:5px 0}
 ol.how{margin:0;padding-left:18px} ol.how li{margin:3px 0}
-.chart svg{width:100%;height:auto;display:block}
-svg .grid{stroke:var(--line);stroke-width:.6} svg .ax{fill:var(--mute);font:8px var(--mono)}
-svg .tr{fill:#7d8aa3;opacity:.75} svg .pre{fill:var(--amber)} svg .fitl{stroke:var(--teal);stroke-width:1.6}
 .legend{color:var(--mute);font-size:11px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px}
 .legend i.v-worth{background:var(--teal)} .legend i.v-marg{background:var(--amber)} .legend i.v-skip{background:#6f7d96} .legend i.ringk{border:1.5px solid var(--text);width:10px;height:10px}
-.dot-tr{background:#7d8aa3} .dot-pre{background:var(--amber);border-radius:1px !important} .dot-fit{background:var(--teal);height:2px !important;width:14px !important;border-radius:0 !important}
 .filters{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:6px 0}
 .chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 11px;cursor:pointer;color:var(--mute);font-size:12.5px}
 .chip[aria-pressed="true"]{background:var(--text);color:var(--ink);border-color:var(--text);font-weight:600}
 .filters input[type=search],.filters select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 10px}
 .filters input[type=search]{width:190px}
 .tog{color:var(--mute);font-size:12.5px}
-.sep{width:1px;height:20px;background:var(--line);margin:0 4px}
 .count{margin:6px 0 8px}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:7px 8px;border-bottom:1px solid var(--text);cursor:pointer;white-space:nowrap}
@@ -103,15 +98,15 @@ tr.grp th:nth-child(2){border-bottom:2px solid var(--line)}
 svg.sweep{width:100%;height:auto;display:block;margin:-4px 0 2px}
 .sweep .sec{fill:rgba(255,255,255,.015);stroke:var(--line);stroke-width:.8} .sweep .sec.alt{fill:rgba(255,255,255,.04)} .sweep .sec.on{fill:rgba(63,224,192,.12)}
 .sweep .ring{fill:none;stroke:#33456a;stroke-dasharray:2 3}
-.sweep .rl{fill:var(--mute);font:9px var(--mono);text-anchor:middle}
-.sweep .fam{fill:var(--mute);font:600 11px var(--sans);cursor:pointer} .sweep .fam tspan{fill:var(--text)}
+.sweep .rl{fill:var(--mute);font:11px var(--mono);text-anchor:middle}
+.sweep .fam{fill:var(--mute);font:600 15px var(--sans);cursor:pointer} .sweep .fam tspan{fill:var(--text)}
 .beam{transform-origin:260px 260px;animation:spin 9s linear infinite}
 .beam path{fill:var(--teal)} .beam line{stroke:var(--teal);stroke-width:1.2}
 @keyframes spin{to{transform:rotate(360deg)} }
 .dot{cursor:pointer} .dot.v-skip{color:#6f7d96} .dot.dim{opacity:.16}
 .dot circle{fill:currentColor;fill-opacity:.85;stroke:var(--ink);stroke-width:.6} .dot:hover circle{stroke:#fff}
 .dot .wl{fill:none;stroke:var(--text);stroke-width:1.1}
-.sweep .lab{fill:var(--text);font:600 10px var(--sans);paint-order:stroke;stroke:var(--ink);stroke-width:3px;pointer-events:none}
+.sweep .lab{fill:var(--text);font:600 13px var(--sans);paint-order:stroke;stroke:var(--ink);stroke-width:3px;pointer-events:none}
 .ptot{display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:6px 0}
 .ptot span,.ptot small,.totals small{display:block;color:var(--mute);font-size:11px} .ptot b{font:700 17px var(--mono)}
 ol.picks{margin:6px 0;padding:0;list-style:none}
