@@ -1,11 +1,11 @@
-/* Drop Radar model (drop-radar-3). One file, two hosts: the browser page loads it as a script and main.ts
+/* Drop Radar model (drop-radar-4). One file, two hosts: the browser page loads it as a script and main.ts
  * requires it, so board.json and the page come from the same function, buildRadar(snapshot).
  * Standard JavaScript only; deterministic (no clock, seeded resampling). No protocol name appears here. */
 (function (root) {
   'use strict';
 
   var CFG = {
-    version: 'drop-radar-3',
+    version: 'drop-radar-4',
     shrink_k: 4,          // pseudo-peers pulling a family tilt toward 1
     growth_weight: 0.5, growth_lo: -25, growth_hi: 40,
     season_lo: 0.75, season_span: 0.35, season_days: 730, season_unknown: 365,
@@ -110,17 +110,18 @@
     var cc = cheapestChain(r.chains), g = cc.gas, pb = PLAY[r.family], W = pb.weeks;
     var fill = function (s) { return s.replace(/\{D\}/g, money(D)).replace(/\{Q\}/g, money(D / 4)).replace(/\{N\}/g, r.name).replace(/\{C\}/g, cc.chain); };
     var stop = Math.round(r.tvl * (1 - Math.max(0.1, Math.abs(r.ch7 || 0) * 2 / 100)));
-    var kyc = r.family === 'RWA & stables';
+    var kyc = r.family === 'RWA & stables', d1 = kyc ? 3 : 1;
+    // at: the day a step falls on (weekly: every held week; neither: it fires only on an event).
     var steps = [
-      { when: 'day 0', text: 'Open ' + r.name + ' from its DefiLlama listing, bookmark that domain, and read its docs on points, rewards and withdrawals; never use a link from a reply or DM.', cost: 0, min: 20 },
-      kyc ? { when: 'day 0', text: 'Pass ' + r.name + '\'s KYC if it asks for one; allow 1 to 3 days before you deposit, and skip the row if it is closed to your country.', cost: 0, min: 30 }
-          : { when: 'day 0', text: 'Note ' + r.name + '\'s minimum deposit and withdrawal delay; if funds lock for longer than ' + W + ' weeks, shrink the deposit or skip.', cost: 0, min: 10 },
-      { when: kyc ? 'day 3' : 'day 1', text: 'Move ' + money(D) + ' of USDC and about ' + money(Math.max(0.5, g * 10)) + ' of gas to one wallet on ' + cc.chain + ', the cheapest of its top chains (one transaction there costs about ' + money(g) + ').', cost: 1 + g, min: 15 },
-      { when: kyc ? 'day 3' : 'day 1', text: fill(pb.verb) + '.', cost: g * pb.tx, min: 20 },
-      { when: 'weekly x' + W, text: 'Each week, check ' + r.name + '\'s TVL on DefiLlama against the stop level ' + money(stop) + ' and log the position\'s balance and any points shown.', cost: 0, min: 5 * W },
-      { when: 'day ' + Math.round(W * 3.5), text: 'Midway, ' + fill(pb.mid) + '.', cost: g * 2, min: 15 },
+      { when: 'day 0', at: 0, text: 'Open ' + r.name + ' from its DefiLlama listing, bookmark that domain, and read its docs on points, rewards and withdrawals; never use a link from a reply or DM.', cost: 0, min: 20 },
+      kyc ? { when: 'day 0', at: 0, text: 'Pass ' + r.name + '\'s KYC if it asks for one; allow 1 to 3 days before you deposit, and skip the row if it is closed to your country.', cost: 0, min: 30 }
+          : { when: 'day 0', at: 0, text: 'Note ' + r.name + '\'s minimum deposit and withdrawal delay; if funds lock for longer than ' + W + ' weeks, shrink the deposit or skip.', cost: 0, min: 10 },
+      { when: 'day ' + d1, at: d1, text: 'Move ' + money(D) + ' of USDC and about ' + money(Math.max(0.5, g * 10)) + ' of gas to one wallet on ' + cc.chain + ', the cheapest of its top chains (one transaction there costs about ' + money(g) + ').', cost: 1 + g, min: 15 },
+      { when: 'day ' + d1, at: d1, text: fill(pb.verb) + '.', cost: g * pb.tx, min: 20 },
+      { when: 'weekly x' + W, weekly: true, text: 'Each week, check ' + r.name + '\'s TVL on DefiLlama against the stop level ' + money(stop) + ' and log the position\'s balance and any points shown.', cost: 0, min: 5 * W },
+      { when: 'day ' + Math.round(W * 3.5), at: Math.round(W * 3.5), text: 'Midway, ' + fill(pb.mid) + '.', cost: g * 2, min: 15 },
       { when: 'any day', text: 'Stop rule: if TVL closes below ' + money(stop) + ' or withdrawals pause, withdraw at once and end the plan.', cost: g * 2, min: 10 },
-      { when: 'day ' + W * 7, text: 'After ' + W + ' weeks, withdraw the ' + money(D) + ' and bridge it back, unless a points season is announced that rewards holding longer.', cost: 1 + g * 2, min: 15 },
+      { when: 'day ' + W * 7, at: W * 7, text: 'After ' + W + ' weeks, withdraw the ' + money(D) + ' and bridge it back, unless a points season is announced that rewards holding longer.', cost: 1 + g * 2, min: 15 },
       { when: 'if a token launches', text: 'Claim only through the domain bookmarked on day 0, never through a link someone sends you; sell or hold by your own rule, not the chart.', cost: g, min: 10 },
     ];
     var fees = steps.reduce(function (s, x) { return s + x.cost; }, 0);
@@ -132,6 +133,53 @@
     return { deposit: D, chain: cc.chain, gas: g, weeks: W, stop: stop, steps: steps, fees: fees, forgone: forgone, minutes: minutes, slice: slice, odds: odds, net_hour: (slice - fees - forgone) / (minutes / 60), verdict: verdict,
       // The same arithmetic at the value band's two ends: how far the verdict leans on the point estimate.
       odds_lo: (fees + forgone) / (slice * r.lo / r.implied), odds_hi: (fees + forgone) / (slice * r.hi / r.implied) };
+  }
+
+
+  // ---------------------------------------------------------------- the portfolio
+  var PF = { budget: 10000, hours: 3, rate: 25, family_cap: 0.25, starts: 4, min_fill: 250, tvl_cap: 0.001 };
+
+  /** Minutes a plan asks for in each week of its hold, steps by number: dated steps in week floor(day / 7), the check every week. */
+  function weekLoad(plan) {
+    var w = [];
+    for (var k = 0; k <= plan.weeks; k++) w.push({ min: 0, steps: [] });
+    plan.steps.forEach(function (s, i) {
+      if (s.weekly) for (k = 0; k < plan.weeks; k++) w[k].min += s.min / plan.weeks;
+      else if (s.at !== undefined) { w[Math.floor(s.at / 7)].min += s.min; w[Math.floor(s.at / 7)].steps.push(i + 1); }
+    });
+    return w;
+  }
+
+  /** Greedy plan: Worth farming and Marginal rows by slice per dollar of fees + income forgone + time (hours x rate),
+   *  one position per protocol, at most family_cap of the budget per family, each position started in the first of
+   *  `starts` weeks where every week of the combined schedule stays under the hours cap. Deterministic. */
+  function planPortfolio(radar, opt) {
+    var o = {}, k;
+    for (k in PF) o[k] = opt && opt[k] > 0 ? +opt[k] : PF[k];
+    var cap = o.hours * 60, load = [], fam = {}, left = o.budget, picks = [], out = [];
+    var cand = radar.rows.filter(function (r) { return r.plan.verdict !== 'Skip'; }).map(function (r) {
+      var p = r.plan; return { r: r, score: p.slice / (p.fees + p.forgone + p.minutes / 60 * o.rate) };
+    }).sort(function (a, b) { return b.score - a.score || a.r.rank - b.r.rank; });
+    cand.forEach(function (c) {
+      var r = c.r, p = r.plan, room = Math.min(left, o.budget * o.family_cap - (fam[r.family] || 0));
+      var dep = Math.floor(Math.min(p.deposit * o.budget / PF.budget, r.tvl * o.tvl_cap, room) / 50) * 50;
+      var skip = function (why) { out.push({ r: r, score: c.score, why: why }); };
+      if (dep < o.min_fill) return skip(left < o.min_fill ? 'budget spent' : room < o.min_fill ? 'family at ' + Math.round(o.family_cap * 100) + '%' : 'too small');
+      var x = dep / p.deposit, slice = p.slice * x, forgone = p.forgone * x;
+      if ((p.fees + forgone) / slice > CFG.marginal) return skip('fees eat a ' + money(dep) + ' slice');
+      var wl = weekLoad(p), start = -1;
+      for (var s = 0; s < o.starts && start < 0; s++) {
+        if (wl.every(function (w, i) { return (load[s + i] || 0) + w.min <= cap; })) start = s;
+      }
+      if (start < 0) return skip('hours cap');
+      wl.forEach(function (w, i) { load[start + i] = (load[start + i] || 0) + w.min; });
+      fam[r.family] = (fam[r.family] || 0) + dep; left -= dep;
+      picks.push({ r: r, score: c.score, deposit: dep, start: start, weeks: wl, fees: p.fees, forgone: forgone, minutes: p.minutes, slice: slice, lo: slice * r.lo / r.implied, hi: slice * r.hi / r.implied });
+    });
+    var sum = function (f) { return picks.reduce(function (t, q) { return t + q[f]; }, 0); };
+    for (k = 0; k < load.length; k++) load[k] = load[k] || 0;
+    return { opt: o, picks: picks, left_out: out, candidates: cand.length, load: load, families: fam,
+      deposit: sum('deposit'), fees: sum('fees'), forgone: sum('forgone'), minutes: sum('minutes'), slice: sum('slice'), lo: sum('lo'), hi: sum('hi') };
   }
 
   function stepText(s) { return s.when + ': ' + s.text + ' (cost ' + money(s.cost) + ', ' + s.min + ' min)'; }
@@ -196,7 +244,7 @@
     return radar.rows.map(function (r) { return { slug: r.slug, name: r.name, rank: r.rank, implied_value_usd: r.implied, farm_steps: r.plan.steps.map(stepText) }; });
   }
 
-  var api = { CFG: CFG, FAMILIES: FAMILIES, familyOf: familyOf, buildRadar: buildRadar, boardRows: boardRows, money: money };
+  var api = { CFG: CFG, PF: PF, FAMILIES: FAMILIES, familyOf: familyOf, buildRadar: buildRadar, boardRows: boardRows, planPortfolio: planPortfolio, weekLoad: weekLoad, money: money };
   root.DropRadar = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

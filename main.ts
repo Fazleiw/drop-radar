@@ -2,7 +2,7 @@
 //
 // The model lives in dashboard/model.js, the same file the page runs: main.ts requires it, builds the
 // radar from the sealed snapshot, checks the board against the gate's rules, and writes
-//   /output/board.json   the ranked rows (slug, name, rank, implied_value_usd, farm_steps)
+//   /output/board.json   the ranked rows (slug, name, rank, implied_value_usd, farm_steps) and the default portfolio
 //   /output/data.js      the snapshot and board.json, for the page to recompute and compare
 //   /output/dashboard/   the page; /output/screenshots/; /output/dossier.json (vendored library), last.
 //
@@ -66,7 +66,15 @@ const rows: BoardRow[] = DropRadar.boardRows(radar);
 const issue = boardIssue(rows, snapshot);
 if (issue !== null) fail(`the board would fail the gate: ${issue}`);
 
-const board = { model: radar.cfg.version, as_of: snapshot.as_of, rows };
+// The default farm portfolio ($10,000, 3 hours a week), so the planner's screenshot has a file behind it too.
+const pf = DropRadar.planPortfolio(radar);
+const portfolio = {
+  budget: pf.opt.budget, hours_per_week: pf.opt.hours, time_usd_per_hour: pf.opt.rate,
+  picks: pf.picks.map((q: { r: { slug: string }; deposit: number; start: number }) => `${q.r.slug}:${q.deposit}:${q.start}`),
+  deposit_usd: pf.deposit, fees_usd: Math.round(pf.fees), forgone_usd: Math.round(pf.forgone), minutes: pf.minutes,
+  slice_usd: Math.round(pf.slice), slice_band_usd: [Math.round(pf.lo), Math.round(pf.hi)],
+};
+const board = { model: radar.cfg.version, as_of: snapshot.as_of, portfolio, rows };
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify(board)}\n`);
 writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\nwindow.BOARD=${JSON.stringify(board)};\n`);
@@ -98,5 +106,5 @@ writeFileSync(
 const o = radar.oos;
 process.stdout.write(
   `drop radar: ${radar.universe} protocols, ${radar.traded.length} traded anchors, ${rows.length} pre-token rows, ${radar.set_aside} set aside; ` +
-    `leave-one-out miss x${o.median_miss.toFixed(2)} (flat multiple x${o.flat_miss.toFixed(2)}); ${pages.length} page files, ${shots.length} screenshots\n`,
+    `leave-one-out miss x${o.median_miss.toFixed(2)} (flat multiple x${o.flat_miss.toFixed(2)}); portfolio ${pf.picks.length} positions; ${pages.length} page files, ${shots.length} screenshots\n`,
 );
