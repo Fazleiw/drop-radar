@@ -1,25 +1,30 @@
 // Drop Radar: a token-radar-01 entry (Node 22, standard library only, no network).
 //
-// Reads the sealed snapshot (/input/snapshot.json, or --input <file|dir>), prices every pre-token
-// protocol against its own trading peers (lib/model.ts), checks the board against the gate's rules,
-// then writes /output/board.json, /output/data.js (the dashboard's data), copies dashboard/ and
-// screenshots/, and last writes /output/dossier.json with the vendored make.fun library.
+// The model lives in dashboard/model.js, the same file the page runs: main.ts requires it, builds the
+// radar from the sealed snapshot, checks the board against the gate's rules, and writes
+//   /output/board.json   the ranked rows (slug, name, rank, implied_value_usd, farm_steps)
+//   /output/data.js      the snapshot and board.json, for the page to recompute and compare
+//   /output/dashboard/   the page; /output/screenshots/; /output/dossier.json (vendored library), last.
 //
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
+const require = createRequire(import.meta.url);
+const DropRadar = require('./dashboard/model.js');
 const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
+interface BoardRow { slug: string; name: string; rank: number; implied_value_usd: number; farm_steps: string[] }
 
 function arg(name: string, fallback: string): string {
   const at = process.argv.indexOf(`--${name}`);
   if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
-  const eq = process.argv.find((a) => a.startsWith(`--${name}=`));
+  const eq = process.argv.find((a: string) => a.startsWith(`--${name}=`));
   return eq === undefined ? fallback : eq.slice(name.length + 3);
 }
 
@@ -28,19 +33,43 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/** The gate's board rules, checked before anything is written: null when the board passes. */
+function boardIssue(rows: BoardRow[], snapshot: { protocols: { slug: string }[]; watchlist: string[] }): string | null {
+  const known = new Set(snapshot.protocols.map((p) => p.slug));
+  const seen = new Set<string>();
+  if (rows.length < 100 || rows.length > 4000) return `${rows.length} rows (100 to 4,000 allowed)`;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    if (!known.has(r.slug)) return `${r.slug} is not a snapshot protocol`;
+    if (seen.has(r.slug)) return `${r.slug} appears twice`;
+    seen.add(r.slug);
+    if (r.rank !== i + 1) return `rank ${i + 1} is ${r.rank}`;
+    if (i > 0 && r.implied_value_usd > rows[i - 1]!.implied_value_usd) return `row ${i + 1} outranks row ${i}`;
+    if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0 || r.implied_value_usd > 1e14) return `${r.slug} implied ${r.implied_value_usd}`;
+    if (r.farm_steps.length < 3 || r.farm_steps.length > 12) return `${r.slug} has ${r.farm_steps.length} steps`;
+    for (const s of r.farm_steps) if (s.trim().length < 20 || s.trim().length > 600) return `${r.slug} has a step of ${s.trim().length} chars`;
+  }
+  const missing = snapshot.watchlist.filter((s) => !seen.has(s));
+  if (missing.length) return `misses watchlist ${missing.slice(0, 5).join(', ')}`;
+  if (rows[0]!.implied_value_usd === rows[rows.length - 1]!.implied_value_usd) return 'every row has the same implied value';
+  return null;
+}
+
 const inputArg = arg('input', '/input');
 const inputFile = inputArg.endsWith('.json') ? inputArg : join(inputArg, 'snapshot.json');
 if (!existsSync(inputFile)) fail(`no snapshot at ${inputFile}`);
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
-const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
-const issue = boardIssue(board, snapshot);
+const snapshot = JSON.parse(readFileSync(inputFile, 'utf8'));
+const radar = DropRadar.buildRadar(snapshot);
+const rows: BoardRow[] = DropRadar.boardRows(radar);
+const issue = boardIssue(rows, snapshot);
 if (issue !== null) fail(`the board would fail the gate: ${issue}`);
 
+const board = { model: radar.cfg.version, as_of: snapshot.as_of, rows };
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ model: radar.model.version, as_of: radar.as_of, rows: board })}\n`);
-writeFileSync(join(out, 'data.js'), dataScript(radar));
+writeFileSync(join(out, 'board.json'), `${JSON.stringify(board)}\n`);
+writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\nwindow.BOARD=${JSON.stringify(board)};\n`);
 
 function copyFiles(from: string, to: string): string[] {
   if (!existsSync(from)) return [];
@@ -66,8 +95,8 @@ writeFileSync(
   buildDossier(out, { text_max_bytes: 65_536, screenshots: { max: 4, max_bytes: 524_288 }, dashboard: { max_files: 400, max_bytes: 4_194_304 } }),
 );
 
-const top = radar.rows[0]!;
+const o = radar.oos;
 process.stdout.write(
-  `drop radar: ${radar.universe} protocols, ${radar.live_count} trading (peer set), ${board.length} pre-token rows ranked; ` +
-    `#1 ${top.name} at $${top.implied.toLocaleString('en-US')}; ${pages.length} page files, ${shots.length} screenshots\n`,
+  `drop radar: ${radar.universe} protocols, ${radar.traded.length} traded anchors, ${rows.length} pre-token rows, ${radar.set_aside} set aside; ` +
+    `leave-one-out miss x${o.median_miss.toFixed(2)} (flat multiple x${o.flat_miss.toFixed(2)}); ${pages.length} page files, ${shots.length} screenshots\n`,
 );
