@@ -140,13 +140,13 @@
 
   // ------------------------------------------------------------ one protocol
   function timeline(plan) {
-    var W = 540, days = plan.weeks * 7, x = function (d) { return 22 + d / days * (W - 50); }, used = {};
+    var W = 540, days = plan.weeks * 7, x = function (d) { return 22 + d / days * (W - 50); }, last = -1e9;
     var s = '<svg viewBox="0 0 ' + W + ' 66" class="tl"><line x1="22" x2="' + (W - 28) + '" y1="18" y2="18"/>';
     for (var w = 0; w <= plan.weeks; w++) s += '<text x="' + x(w * 7) + '" y="44">' + (w ? 'wk ' + w : 'day 0') + '</text>';
     plan.steps.forEach(function (st, i) {
       var m = /day (\d+)/.exec(st.when), d = m ? +m[1] : null;
       if (d === null) return;
-      var cx = x(d) + (used[d] || 0) * 17; used[d] = (used[d] || 0) + 1;
+      var cx = Math.max(x(d), last + 18); last = cx;   // steps on near days sit side by side, never on top of each other
       s += '<circle cx="' + cx + '" cy="18" r="8"/><text class="n" x="' + cx + '" y="21.5">' + (i + 1) + '</text>';
     });
     return s + '<text class="stop" x="22" y="62">step ' + (plan.steps.findIndex(function (st) { return /^Stop rule/.test(st.text); }) + 1) + ', any day: exit if TVL closes under ' + money(plan.stop) + '</text></svg>';
