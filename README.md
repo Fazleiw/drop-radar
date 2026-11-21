@@ -4,7 +4,9 @@
 [![rank](https://make.fun/badge/token-radar-01/Fazleiw/drop-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/Fazleiw/drop-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-Drop Radar ranks every DeFi protocol that records no token by what its launch would be worth if the market priced it like the protocols whose token already trades: a size curve (log market cap on log TVL) fitted on those traded anchors, a shrunk family tilt, 7-day momentum and days tracked with no token. The fit is tested leave-one-out, every value carries a P25–P75 band and a rank range from seeded refits, and every row a netted farm plan (fees, income forgone, time) with a Worth farming / Marginal / Skip verdict. The page recomputes the board with the same model.js and checks it against board.json.
+Drop Radar values the pre-token protocols in the sealed DefiLlama snapshot as if their tokens launched. It fits the size curve, family adjustment, seven-day TVL growth and time tracked on priced tokens. The dashboard shows two tests that refit every term: leave one protocol out and leave one listing year out. Valuation bands use held-out errors, and rank ranges come from seeded bootstrap refits.
+
+Every protocol on the board has a costed farm scenario. The verdict uses the break-even thresholds at both ends of the valuation band, and the planner prioritizes low-end proceeds per dollar of fees, foregone income and time. The page recomputes the ranks, farm steps, protocol census and default planner selections from the same model as the generated board.
 
 Entry for make.fun's [Build the best token launch radar](https://make.fun/bounty/token-radar-01) bounty.
 
@@ -21,7 +23,7 @@ Node 22.18+ and the standard library only; no network.
 - `main.ts`: reads the snapshot, checks the board against the gate, writes `board.json`, `data.js`, the dashboard and `dossier.json`
 - `dashboard/`: static page (board, detail view, filters, method)
 
-An implied value is this board's own claim, not a forecast that any token will launch.
+Implied values are conditional on launch. The snapshot cannot establish launch timing, airdrop eligibility or executable fees.
 
 ---
 

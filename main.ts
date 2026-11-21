@@ -74,7 +74,7 @@ const portfolio = {
   deposit_usd: pf.deposit, fees_usd: Math.round(pf.fees), forgone_usd: Math.round(pf.forgone), minutes: pf.minutes,
   slice_usd: Math.round(pf.slice), slice_band_usd: [Math.round(pf.lo), Math.round(pf.hi)],
 };
-const board = { model: radar.cfg.version, as_of: snapshot.as_of, portfolio, rows };
+const board = { model: radar.cfg.version, as_of: snapshot.as_of, census: radar.census, portfolio, rows };
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify(board)}\n`);
 writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\nwindow.BOARD=${JSON.stringify(board)};\n`);
@@ -105,6 +105,6 @@ writeFileSync(
 
 const o = radar.oos;
 process.stdout.write(
-  `drop radar: ${radar.universe} protocols, ${radar.traded.length} traded anchors, ${rows.length} pre-token rows, ${radar.set_aside} set aside; ` +
+  `drop radar: ${radar.universe} protocols, ${radar.traded.length} traded anchors, ${rows.length} pre-token rows, ${radar.census.products} set aside; ` +
     `leave-one-out miss x${o.median_miss.toFixed(2)} (flat multiple x${o.flat_miss.toFixed(2)}); portfolio ${pf.picks.length} positions; ${pages.length} page files, ${shots.length} screenshots\n`,
 );

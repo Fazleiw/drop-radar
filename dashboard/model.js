@@ -1,14 +1,13 @@
-/* Drop Radar model (drop-radar-4). One file, two hosts: the browser page loads it as a script and main.ts
+/* Drop Radar model (drop-radar-5). One file, two hosts: the browser page loads it as a script and main.ts
  * requires it, so board.json and the page come from the same function, buildRadar(snapshot).
  * Standard JavaScript only; deterministic (no clock, seeded resampling). No protocol name appears here. */
 (function (root) {
   'use strict';
 
   var CFG = {
-    version: 'drop-radar-4',
+    version: 'drop-radar-5',
     shrink_k: 4,          // pseudo-peers pulling a family tilt toward 1
-    growth_weight: 0.5, growth_lo: -25, growth_hi: 40,
-    season_lo: 0.75, season_span: 0.35, season_days: 730, season_unknown: 365,
+    growth_lo: -25, growth_hi: 40, factor_penalty: 100,
     drop_share: 0.10,     // airdrop share of the implied FDV
     tbill: 0.04,          // income a deposit forgoes, per year
     boot: 60,             // refits for the rank range
@@ -16,7 +15,7 @@
   };
 
   var FAMILIES = ['Vaults & yield', 'Lending & CDP', 'Trading', 'RWA & stables', 'Staking', 'Infra & chains', 'Other'];
-  var EXCLUDED = { 'CEX': 1, 'Bridge': 1, 'Canonical Bridge': 1, 'Liquid Staking': 1, 'Liquid Restaking': 1, 'Restaked BTC': 1 };
+  var EXCLUDED = { 'CEX': 1, 'Bridge': 1, 'Cross Chain Bridge': 1, 'Canonical Bridge': 1, 'Liquid Staking': 1, 'Liquid Restaking': 1, 'Restaked BTC': 1 };
 
   function familyOf(cat) {
     var c = String(cat || '').toLowerCase();
@@ -31,11 +30,10 @@
 
   function isPreToken(p) { return p.mcap_usd === null && p.gecko_id === null && p.symbol === null; }
 
-  /** The house product rule minus its TVL floor: wrapped, staked, bridged and exchange products of a traded token. */
   function isProduct(p) {
     if (EXCLUDED[p.category]) return true;
     if (/^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)\b/i.test(p.name)) return true;
-    return /\b(wrapped|staked|staking)\b/i.test(p.name) || /\s(v\d+|\d+\.\d+)$/i.test(p.name);
+    return /\b(wrapped|staked|staking)\b/i.test(p.name) || /\s(v\d+(\.\d+)?|\d+\.\d+)$/i.test(p.name);
   }
 
   var L = function (x) { return Math.log(x) / Math.LN10; };
@@ -61,32 +59,58 @@
     return t;
   }
 
-  function fitAll(pts) { var c = fitCurve(pts); return { curve: c, tilts: fitTilts(pts, c) }; }
-  function predictLog(fit, x, fam) { return fit.curve.a + fit.curve.b * x + fit.tilts[fam].log; }
-
-  function spearman(a, b) {
-    function ranks(v) { var idx = v.map(function (x, i) { return [x, i]; }).sort(function (p, q) { return p[0] - q[0]; }); var r = []; idx.forEach(function (p, k) { r[p[1]] = k; }); return r; }
-    var ra = ranks(a), rb = ranks(b), n = a.length, d = 0;
-    for (var i = 0; i < n; i++) d += (ra[i] - rb[i]) * (ra[i] - rb[i]);
-    return 1 - (6 * d) / (n * (n * n - 1));
+  function features(p, asOf) {
+    var age = p.listed_at ? daysBetween(p.listed_at, asOf) : null;
+    return { x: L(p.tvl_usd / 1e8), fam: familyOf(p.category), age: age,
+      g: clamp(p.change_7d || 0, CFG.growth_lo, CFG.growth_hi) / 25,
+      d: age === null ? 0 : clamp(L(Math.max(1, age) / 365), -1, 1) };
   }
 
-  /** Leave-one-out: refit without each traded token, predict it, and compare with one flat mcap/TVL multiple. */
-  function outOfSample(pts) {
-    var err = [], flatErr = [], pred = [], act = [];
-    for (var i = 0; i < pts.length; i++) {
-      var rest = pts.slice(0, i).concat(pts.slice(i + 1));
-      var f = fitAll(rest), p = pts[i];
-      var yhat = predictLog(f, p.x, p.fam);
-      err.push(Math.abs(yhat - p.y)); pred.push(yhat); act.push(p.y);
-      var flat = median(rest.map(function (q) { return q.y - L(q.tvl); }));
-      flatErr.push(Math.abs(flat + L(p.tvl) - p.y));
-    }
-    var within3 = err.filter(function (e) { return e <= L(3); }).length / err.length;
-    return { n: pts.length, median_miss: Math.pow(10, median(err)), flat_miss: Math.pow(10, median(flatErr)), within3: within3, rank_corr: spearman(pred, act), sd: Math.sqrt(err.reduce(function (s, e) { return s + e * e; }, 0) / err.length) };
+  function baseLog(fit, p) { return fit.curve.a + fit.curve.b * p.x + fit.tilts[p.fam].log; }
+  function predictLog(fit, p) { return baseLog(fit, p) + fit.growth * p.g + fit.age * p.d; }
+
+  function fitAll(pts) {
+    // Refit the size curve with capped residuals so extreme market caps have less leverage.
+    var initial = fitCurve(pts);
+    var errors = pts.map(function (p) { return p.y - initial.a - initial.b * p.x; });
+    var center = median(errors);
+    var cap = 1.75 * median(errors.map(function (e) { return Math.abs(e - center); }));
+    var curve = fitCurve(pts.map(function (p, i) {
+      return { x: p.x, y: initial.a + initial.b * p.x + clamp(errors[i], center - cap, center + cap) };
+    }));
+    var fit = { curve: curve, tilts: fitTilts(pts, curve) };
+    // Joint ridge regression on the remaining log-dollar error, with neutral priors.
+    var gg = CFG.factor_penalty, dd = CFG.factor_penalty, gd = 0, gy = 0, dy = 0;
+    pts.forEach(function (p) {
+      var e = clamp(p.y - baseLog(fit, p), -1, 1);
+      gg += p.g * p.g; dd += p.d * p.d; gd += p.g * p.d;
+      gy += p.g * e; dy += p.d * e;
+    });
+    var det = gg * dd - gd * gd;
+    fit.growth = (gy * dd - dy * gd) / det;
+    fit.age = (dy * gg - gy * gd) / det;
+    return fit;
   }
 
-  // ---------------------------------------------------------------- farm arithmetic
+  function outOfSample(pts, byYear) {
+    var folds = new Map(), errors = [], flat = [];
+    pts.forEach(function (p) {
+      var k = byYear ? p.year : p.slug;
+      if (k) folds.set(k, (folds.get(k) || []).concat(p));
+    });
+    folds.forEach(function (test) {
+      var train = pts.filter(function (p) { return !test.includes(p); });
+      var f = fitAll(train), mult = median(train.map(function (p) { return p.y - p.x; }));
+      test.forEach(function (p) {
+        errors.push(p.y - predictLog(f, p));
+        flat.push(Math.abs(p.y - p.x - mult));
+      });
+    });
+    return { n: errors.length, folds: folds.size, median_miss: Math.pow(10, median(errors.map(Math.abs))),
+      flat_miss: Math.pow(10, median(flat)), band: [quantile(errors, 0.25), quantile(errors, 0.75)] };
+  }
+
+  // Farm scenarios
   var GAS = { Solana: 0.005, Sui: 0.01, Aptos: 0.01, Base: 0.03, Arbitrum: 0.05, Optimism: 0.04, Polygon: 0.02, BSC: 0.08, Binance: 0.08, Avalanche: 0.08, Sonic: 0.02, Ink: 0.02, Unichain: 0.02, 'Hyperliquid L1': 0.03, Plasma: 0.02, Tron: 1, Bitcoin: 2, Ethereum: 4 };
   function cheapestChain(chains) {
     var best = null;
@@ -96,9 +120,10 @@
   function money(x) { var s = x < 0 ? '-' : ''; x = Math.abs(x); return s + (x >= 1e6 ? '$' + (x / 1e6).toFixed(1) + 'M' : x < 10 ? '$' + x.toFixed(2) : '$' + Math.round(x).toLocaleString('en-US')); }
 
   var PLAY = {
-    'Vaults & yield': { verb: 'Deposit {D} of USDC into {N}\'s largest stablecoin vault on {C} and keep the receipt shares in the same wallet', tx: 2, weeks: 8, mid: 'top the vault up once with 10% more so the address shows two deposit dates' },
-    'Lending & CDP': { verb: 'Supply {D} of USDC on {N} on {C}, then borrow 20% of it back (health factor above 3) and leave the loan open', tx: 3, weeks: 8, mid: 'repay half the loan and borrow it again, a second dated action on both sides of the book' },
-    'Trading': { verb: 'Deposit {D} on {N} on {C} and trade it in 5 small round trips at 1x (fees under 0.3% of the deposit)', tx: 6, weeks: 6, mid: 'make 3 more round trips and, if the app has one, add {Q} to its liquidity vault' },
+    'Vaults & yield': { verb: 'If {N} offers a USDC vault on {C}, deposit up to {D} and keep the shares; otherwise confirm the supported asset or stop', tx: 2, weeks: 8, mid: 'verify recorded points and use the withdrawal preview to estimate exit costs' },
+    'Lending & CDP': { verb: 'Supply {D} of USDC on {N} on {C}, where the asset is supported. Borrow up to 20% only if an official points program counts borrowing and the health factor stays above 3', tx: 3, weeks: 8, mid: 'recheck health and repay the loan if its funding cost exceeds the plan' },
+    'Trading': { verb: 'On {N} on {C}, quote a spot swap up to {Q}. Use a route credited to this protocol and keep the receipt, or skip if none is available', tx: 2, weeks: 6, mid: 'check the credited activity before repeating one small swap' },
+    'Perps': { verb: 'On {N} on {C}, use an officially eligible market for one open-and-close trade up to {Q} at 1x; close the position the same day', tx: 3, weeks: 6, mid: 'verify eligible fills and use the same size for a second round trip only within the fee cap' },
     'RWA & stables': { verb: 'Subscribe {D} to {N}\'s main product on {C} after checking its minimum ticket and redemption window', tx: 2, weeks: 8, mid: 're-read the product page and confirm the position accrues; redeem nothing early' },
     'Staking': { verb: 'Stake {D} through {N}\'s own interface on {C}, choosing the option with no lock-up or the shortest one', tx: 2, weeks: 8, mid: 'claim or restake any reward once, a second dated action' },
     'Infra & chains': { verb: 'Bridge {D} onto {N}{OC} and use 3 of its own apps: a swap, a lend and a liquidity position', tx: 6, weeks: 6, mid: 'repeat one swap and one deposit so activity spans more than one week' },
@@ -107,20 +132,22 @@
 
   function farmPlan(r) {
     var D = r.tvl < 20e6 ? 1000 : 2000;
-    var cc = cheapestChain(r.chains), g = cc.gas, pb = PLAY[r.family], W = pb.weeks;
+    var cc = cheapestChain(r.chains), g = cc.gas;
+    var trading = r.family === 'Trading', pb = PLAY[/derivative|perp/i.test(r.category) ? 'Perps' : r.family], W = pb.weeks;
+    var execution = trading ? D * 0.003 : 0;
     var fill = function (s) { return s.replace(/\{OC\}/g, cc.chain === r.name ? '' : ' (' + cc.chain + ')').replace(/\{D\}/g, money(D)).replace(/\{Q\}/g, money(D / 4)).replace(/\{N\}/g, r.name).replace(/\{C\}/g, cc.chain); };
-    var stop = Math.round(r.tvl * (1 - Math.max(0.1, Math.abs(r.ch7 || 0) * 2 / 100)));
+    var stop = Math.round(r.tvl * (1 - clamp(Math.abs(r.ch7 || 0) * 2 / 100, 0.1, 0.4)));
     var kyc = r.family === 'RWA & stables', d1 = kyc ? 3 : 1;
     // at: the day a step falls on (weekly: every held week; neither: it fires only on an event).
     var steps = [
       { when: 'day 0', at: 0, text: 'Open ' + r.name + ' from its DefiLlama listing, bookmark that domain, and read its docs on points, rewards and withdrawals; never use a link from a reply or DM.', cost: 0, min: 20 },
       kyc ? { when: 'day 0', at: 0, text: 'Pass ' + r.name + '\'s KYC if it asks for one; allow 1 to 3 days before you deposit, and skip the row if it is closed to your country.', cost: 0, min: 30 }
           : { when: 'day 0', at: 0, text: 'Note ' + r.name + '\'s minimum deposit and withdrawal delay; if funds lock for longer than ' + W + ' weeks, shrink the deposit or skip.', cost: 0, min: 10 },
-      { when: 'day ' + d1, at: d1, text: 'Move ' + money(D) + ' of USDC and about ' + money(Math.max(0.5, g * 10)) + ' of gas to one wallet on ' + cc.chain + ', the cheapest of its top chains (one transaction there costs about ' + money(g) + ').', cost: 1 + g, min: 15 },
-      { when: 'day ' + d1, at: d1, text: fill(pb.verb) + '.', cost: g * pb.tx, min: 20 },
+      { when: 'day ' + d1, at: d1, text: 'Move ' + money(D) + ' of USDC and about ' + money(Math.max(0.5, g * 10)) + ' of gas to one wallet on ' + cc.chain + ', the cheapest of up to three listed chains (one transaction there costs about ' + money(g) + ').', cost: 1 + g, min: 15 },
+      { when: 'day ' + d1, at: d1, text: fill(pb.verb) + (trading ? '. Allow ' + money(execution / 2) + ' for execution fees and slippage, separate from gas.' : '.'), cost: g * pb.tx + execution / 2, min: 20 },
       { when: 'weekly x' + W, weekly: true, text: 'Each week, check ' + r.name + '\'s TVL on DefiLlama against the stop level ' + money(stop) + ' and log the position\'s balance and any points shown.', cost: 0, min: 5 * W },
-      { when: 'day ' + Math.round(W * 3.5), at: Math.round(W * 3.5), text: 'Midway, ' + fill(pb.mid) + '.', cost: g * 2, min: 15 },
-      { when: 'any day', text: 'Stop rule: if TVL closes below ' + money(stop) + ' or withdrawals pause, withdraw at once and end the plan.', cost: g * 2, min: 10 },
+      { when: 'day ' + Math.round(W * 3.5), at: Math.round(W * 3.5), text: 'Midway, ' + fill(pb.mid) + '.', cost: g * 2 + execution / 2, min: 15 },
+      { when: 'any day', text: 'Stop rule: if TVL falls below ' + money(stop) + ', exit when withdrawals are available. If paused, cancel new deposits and track the official status.', cost: g * 2, min: 10 },
       { when: 'day ' + W * 7, at: W * 7, text: 'After ' + W + ' weeks, withdraw the ' + money(D) + ' and bridge it back, unless a points season is announced that rewards holding longer.', cost: 1 + g * 2, min: 15 },
       { when: 'if a token launches', text: 'Claim only through the domain bookmarked on day 0, never through a link someone sends you; sell or hold by your own rule, not the chart.', cost: g, min: 10 },
     ];
@@ -128,18 +155,17 @@
     var forgone = D * CFG.tbill * W / 52;
     var minutes = steps.reduce(function (s, x) { return s + x.min; }, 0);
     var slice = CFG.drop_share * r.implied * D / r.tvl;
-    var odds = (fees + forgone) / slice;
-    var verdict = odds <= CFG.worth ? 'Worth farming' : odds <= CFG.marginal ? 'Marginal' : 'Skip';
-    return { deposit: D, chain: cc.chain, gas: g, weeks: W, stop: stop, steps: steps, fees: fees, forgone: forgone, minutes: minutes, slice: slice, odds: odds, net_hour: (slice - fees - forgone) / (minutes / 60), verdict: verdict,
+    var odds = (fees + forgone) / slice, oddsLo = odds * r.implied / r.lo, oddsHi = odds * r.implied / r.hi;
+    var verdict = oddsLo <= CFG.worth ? 'Worth farming' : oddsHi > CFG.marginal ? 'Skip' : 'Marginal';
+    return { deposit: D, chain: cc.chain, gas: g, weeks: W, stop: stop, steps: steps, fees: fees, execution: execution, forgone: forgone, minutes: minutes, slice: slice, odds: odds, net_hour: (slice - fees - forgone) / (minutes / 60), verdict: verdict,
       // The same arithmetic at the value band's two ends: how far the verdict leans on the point estimate.
-      odds_lo: (fees + forgone) / (slice * r.lo / r.implied), odds_hi: (fees + forgone) / (slice * r.hi / r.implied) };
+      odds_lo: oddsLo, odds_hi: oddsHi };
   }
 
 
-  // ---------------------------------------------------------------- the portfolio
+  // Portfolio
   var PF = { budget: 10000, hours: 3, rate: 25, family_cap: 0.25, starts: 4, min_fill: 250, tvl_cap: 0.001 };
 
-  /** Minutes a plan asks for in each week of its hold, steps by number: dated steps in week floor(day / 7), the check every week. */
   function weekLoad(plan) {
     var w = [];
     for (var k = 0; k <= plan.weeks; k++) w.push({ min: 0, steps: [] });
@@ -150,23 +176,20 @@
     return w;
   }
 
-  /** Greedy plan: Worth farming and Marginal rows by slice per dollar of fees + income forgone + time (hours x rate),
-   *  one position per protocol, at most family_cap of the budget per family, each position started in the first of
-   *  `starts` weeks where every week of the combined schedule stays under the hours cap. Deterministic. */
   function planPortfolio(radar, opt) {
     var o = {}, k;
     for (k in PF) o[k] = opt && opt[k] > 0 ? +opt[k] : PF[k];
     var cap = o.hours * 60, load = [], fam = {}, left = o.budget, picks = [], out = [];
     var cand = radar.rows.filter(function (r) { return r.plan.verdict !== 'Skip'; }).map(function (r) {
-      var p = r.plan; return { r: r, score: p.slice / (p.fees + p.forgone + p.minutes / 60 * o.rate) };
+      var p = r.plan; return { r: r, score: (p.slice * r.lo / r.implied) / (p.fees + p.forgone + p.minutes / 60 * o.rate) };
     }).sort(function (a, b) { return b.score - a.score || a.r.rank - b.r.rank; });
     cand.forEach(function (c) {
       var r = c.r, p = r.plan, room = Math.min(left, o.budget * o.family_cap - (fam[r.family] || 0));
       var dep = Math.floor(Math.min(p.deposit * o.budget / PF.budget, r.tvl * o.tvl_cap, room) / 50) * 50;
       var skip = function (why) { out.push({ r: r, score: c.score, why: why }); };
       if (dep < o.min_fill) return skip(left < o.min_fill ? 'budget spent' : room < o.min_fill ? 'family at ' + Math.round(o.family_cap * 100) + '%' : 'too small');
-      var x = dep / p.deposit, slice = p.slice * x, forgone = p.forgone * x;
-      if ((p.fees + forgone) / slice > CFG.marginal) return skip('fees eat a ' + money(dep) + ' slice');
+      var x = dep / p.deposit, slice = p.slice * x, forgone = p.forgone * x, fees = p.fees + p.execution * (x - 1);
+      if ((fees + forgone) / (slice * r.hi / r.implied) > CFG.marginal) return skip('fees eat a ' + money(dep) + ' slice');
       var wl = weekLoad(p), start = -1;
       for (var s = 0; s < o.starts && start < 0; s++) {
         if (wl.every(function (w, i) { return (load[s + i] || 0) + w.min <= cap; })) start = s;
@@ -174,7 +197,7 @@
       if (start < 0) return skip('hours cap');
       wl.forEach(function (w, i) { load[start + i] = (load[start + i] || 0) + w.min; });
       fam[r.family] = (fam[r.family] || 0) + dep; left -= dep;
-      picks.push({ r: r, score: c.score, deposit: dep, start: start, weeks: wl, fees: p.fees, forgone: forgone, minutes: p.minutes, slice: slice, lo: slice * r.lo / r.implied, hi: slice * r.hi / r.implied });
+      picks.push({ r: r, score: c.score, deposit: dep, start: start, weeks: wl, fees: fees, forgone: forgone, minutes: p.minutes, slice: slice, lo: slice * r.lo / r.implied, hi: slice * r.hi / r.implied });
     });
     var sum = function (f) { return picks.reduce(function (t, q) { return t + q[f]; }, 0); };
     for (k = 0; k < load.length; k++) load[k] = load[k] || 0;
@@ -184,47 +207,47 @@
 
   function stepText(s) { return s.when + ': ' + s.text + ' (cost ' + money(s.cost) + ', ' + s.min + ' min)'; }
 
-  // ---------------------------------------------------------------- the board
+  // Board
   function buildRadar(snap) {
     var asOf = snap.as_of, watch = {};
     snap.watchlist.forEach(function (s) { watch[s] = 1; });
-    var pts = [];
+    var pts = [], rows = [];
+    var census = { ranked: 0, priced: 0, unpricedToken: 0, products: 0, unusable: 0 };
     snap.protocols.forEach(function (p) {
-      if (p.mcap_usd > 0 && p.tvl_usd > 0) pts.push({ slug: p.slug, name: p.name, symbol: p.symbol, category: p.category || 'Uncategorised', fam: familyOf(p.category), tvl: p.tvl_usd, mcap: p.mcap_usd, x: L(p.tvl_usd / 1e8), y: L(p.mcap_usd) });
+      if (p.mcap_usd > 0 && p.tvl_usd > 0) {
+        pts.push(Object.assign(features(p, asOf), { slug: p.slug, name: p.name, symbol: p.symbol,
+          category: p.category || 'Uncategorised', year: p.listed_at && p.listed_at.slice(0, 4),
+          tvl: p.tvl_usd, mcap: p.mcap_usd, y: L(p.mcap_usd) }));
+      }
     });
-    pts.sort(function (a, b) { return a.slug < b.slug ? -1 : 1; });
-    var fit = fitAll(pts);
-    var oos = outOfSample(pts);
-    var resid = pts.map(function (p) { return p.y - predictLog(fit, p.x, p.fam); });
-    var bandLo = quantile(resid, 0.25), bandHi = quantile(resid, 0.75);
+    pts.sort(function (a, b) { return a.slug.localeCompare(b.slug, 'en'); });
+    var fit = fitAll(pts), oos = outOfSample(pts, false), cohort = outOfSample(pts, true);
+    var bandLo = Math.min(0, oos.band[0]), bandHi = Math.max(0, oos.band[1]);
 
-    var rows = [], setAside = 0;
     snap.protocols.forEach(function (p) {
       var w = !!watch[p.slug];
-      if (!w && (!isPreToken(p) || !(p.tvl_usd > 0))) return;
-      if (!w && isProduct(p)) { setAside++; return; }
-      var fam = familyOf(p.category), x = L(p.tvl_usd / 1e8);
-      var size = Math.pow(10, fit.curve.a + fit.curve.b * x);
-      var tilt = Math.pow(10, fit.tilts[fam].log);
-      var g = clamp(p.change_7d === null ? 0 : p.change_7d, CFG.growth_lo, CFG.growth_hi);
-      var mom = 1 + CFG.growth_weight * g / 100;
-      var age = p.listed_at ? daysBetween(p.listed_at, asOf) : null;
-      var season = CFG.season_lo + CFG.season_span * Math.min(age === null ? CFG.season_unknown : age, CFG.season_days) / CFG.season_days;
-      var implied = Math.max(1, Math.round(size * tilt * mom * season));
-      rows.push({ slug: p.slug, name: p.name, category: p.category || 'Uncategorised', family: fam, chains: p.chains, tvl: p.tvl_usd, ch7: p.change_7d, age: age, watch: w, above: p.tvl_usd >= snap.floor_usd,
-        f: { size: size, tilt: tilt, mom: mom, season: season, peers: fit.tilts[fam].peers }, implied: implied,
-        lo: Math.round(implied * Math.pow(10, bandLo)), hi: Math.round(implied * Math.pow(10, bandHi)) });
+      if (!w && p.tvl_usd <= 0) { census.unusable++; return; }
+      if (!w && !isPreToken(p)) { census[p.mcap_usd > 0 ? 'priced' : 'unpricedToken']++; return; }
+      if (!w && isProduct(p)) { census.products++; return; }
+      census.ranked++;
+      var f = features(p, asOf), implied = Math.max(1, Math.round(Math.pow(10, predictLog(fit, f))));
+      var size = Math.pow(10, fit.curve.a + fit.curve.b * f.x);
+      rows.push({ slug: p.slug, name: p.name, category: p.category || 'Uncategorised', family: f.fam,
+        chains: p.chains, tvl: p.tvl_usd, ch7: p.change_7d, age: f.age, features: f, watch: w, above: p.tvl_usd >= snap.floor_usd,
+        f: { size: size, tilt: Math.pow(10, fit.tilts[f.fam].log), mom: Math.pow(10, fit.growth * f.g),
+          season: Math.pow(10, fit.age * f.d), peers: fit.tilts[f.fam].peers }, implied: implied,
+        lo: Math.max(1, Math.round(implied * Math.pow(10, bandLo))), hi: Math.round(implied * Math.pow(10, bandHi)) });
     });
     rows.sort(function (a, b) { return b.implied - a.implied || (a.slug < b.slug ? -1 : 1); });
     rows.forEach(function (r, i) { r.rank = i + 1; });
 
     // Rank range: refit the curve and tilts on seeded resamples of the traded set, rank again, keep P10..P90.
-    var seed = 20261114, rnd = function () { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    var seed = 20261114, rnd = function () { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
     var seen = rows.map(function () { return []; });
     for (var b = 0; b < CFG.boot; b++) {
       var sample = pts.map(function () { return pts[Math.floor(rnd() * pts.length)]; });
       var fb = fitAll(sample);
-      var vals = rows.map(function (r, i) { return { i: i, v: predictLog(fb, L(r.tvl / 1e8), r.family) + L(r.f.mom * r.f.season) }; });
+      var vals = rows.map(function (r, i) { return { i: i, v: predictLog(fb, r.features) }; });
       vals.sort(function (p, q) { return q.v - p.v; }).forEach(function (o, k) { seen[o.i].push(k + 1); });
     }
     rows.forEach(function (r, i) { r.rlo = Math.round(quantile(seen[i], 0.1)); r.rhi = Math.round(quantile(seen[i], 0.9)); r.plan = farmPlan(r); });
@@ -239,14 +262,14 @@
     rows.forEach(function (r) { r.peers = peersOf(r); });
 
     return { cfg: CFG, as_of: asOf, source: snap.source, floor: snap.floor_usd, universe: snap.protocols.length, watch_n: snap.watchlist.length,
-      set_aside: setAside, fit: fit, oos: oos, band: [bandLo, bandHi], traded: pts, rows: rows };
+      census: census, fit: fit, oos: oos, cohort: cohort, traded: pts, rows: rows };
   }
 
   function boardRows(radar) {
     return radar.rows.map(function (r) { return { slug: r.slug, name: r.name, rank: r.rank, implied_value_usd: r.implied, farm_steps: r.plan.steps.map(stepText) }; });
   }
 
-  var api = { CFG: CFG, PF: PF, FAMILIES: FAMILIES, familyOf: familyOf, buildRadar: buildRadar, boardRows: boardRows, planPortfolio: planPortfolio, weekLoad: weekLoad, money: money };
+  var api = { CFG: CFG, PF: PF, FAMILIES: FAMILIES, familyOf: familyOf, predictLog: predictLog, buildRadar: buildRadar, boardRows: boardRows, planPortfolio: planPortfolio, weekLoad: weekLoad, money: money };
   root.DropRadar = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
