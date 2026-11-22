@@ -74,7 +74,7 @@ const portfolio = {
   deposit_usd: pf.deposit, fees_usd: Math.round(pf.fees), forgone_usd: Math.round(pf.forgone), minutes: pf.minutes,
   slice_usd: Math.round(pf.slice), slice_band_usd: [Math.round(pf.lo), Math.round(pf.hi)],
 };
-const board = { model: radar.cfg.version, as_of: snapshot.as_of, census: radar.census, portfolio, rows };
+const board = { model: radar.cfg.version, as_of: snapshot.as_of, census: radar.census, exclusions: radar.exclusions, portfolio, rows };
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify(board)}\n`);
 writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\nwindow.BOARD=${JSON.stringify(board)};\n`);

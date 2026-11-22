@@ -1,11 +1,9 @@
-/* Drop Radar model (drop-radar-5). One file, two hosts: the browser page loads it as a script and main.ts
- * requires it, so board.json and the page come from the same function, buildRadar(snapshot).
- * Standard JavaScript only; deterministic (no clock, seeded resampling). No protocol name appears here. */
+/* Deterministic model shared by main.ts and the offline dashboard. */
 (function (root) {
   'use strict';
 
   var CFG = {
-    version: 'drop-radar-5',
+    version: 'drop-radar-6',
     shrink_k: 4,          // pseudo-peers pulling a family tilt toward 1
     growth_lo: -25, growth_hi: 40, factor_penalty: 100,
     drop_share: 0.10,     // airdrop share of the implied FDV
@@ -15,7 +13,7 @@
   };
 
   var FAMILIES = ['Vaults & yield', 'Lending & CDP', 'Trading', 'RWA & stables', 'Staking', 'Infra & chains', 'Other'];
-  var EXCLUDED = { 'CEX': 1, 'Bridge': 1, 'Cross Chain Bridge': 1, 'Canonical Bridge': 1, 'Liquid Staking': 1, 'Liquid Restaking': 1, 'Restaked BTC': 1 };
+  var STAKED = ['Liquid Staking', 'Liquid Restaking', 'Restaked BTC'];
 
   function familyOf(cat) {
     var c = String(cat || '').toLowerCase();
@@ -30,10 +28,15 @@
 
   function isPreToken(p) { return p.mcap_usd === null && p.gecko_id === null && p.symbol === null; }
 
-  function isProduct(p) {
-    if (EXCLUDED[p.category]) return true;
-    if (/^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)\b/i.test(p.name)) return true;
-    return /\b(wrapped|staked|staking)\b/i.test(p.name) || /\s(v\d+(\.\d+)?|\d+\.\d+)$/i.test(p.name);
+  function productType(p, stakedTokens) {
+    if (p.category === 'CEX' || /^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)\b/i.test(p.name)) return 'Exchange custody';
+    if (['Bridge', 'Cross Chain Bridge', 'Canonical Bridge'].includes(p.category)) return 'Bridge';
+    if (p.category === 'Stablecoin Wrapper') return 'Stablecoin wrapper';
+    if (STAKED.includes(p.category) || /\b(staked|staking)\b/i.test(p.name) ||
+        (p.category === 'Restaking' && p.slug.split('-').some(function (part) { return stakedTokens.has(part); }))) return 'Staking product';
+    if (/\bwrapped\b/i.test(p.name)) return 'Wrapped asset';
+    if (/\s(v\d+(\.\d+)?|\d+\.\d+)$/i.test(p.name)) return 'Versioned listing';
+    return '';
   }
 
   var L = function (x) { return Math.log(x) / Math.LN10; };
@@ -134,13 +137,13 @@
   function money(x) { var s = x < 0 ? '-' : ''; x = Math.abs(x); return s + (x >= 1e6 ? '$' + (x / 1e6).toFixed(1) + 'M' : x < 10 ? '$' + x.toFixed(2) : '$' + Math.round(x).toLocaleString('en-US')); }
 
   var PLAY = {
-    'Vaults & yield': { verb: 'If {N} offers a USDC vault on {C}, deposit up to {D} and keep the shares; otherwise confirm the supported asset or stop', tx: 2, weeks: 8, mid: 'verify recorded points and use the withdrawal preview to estimate exit costs' },
-    'Lending & CDP': { verb: 'Supply {D} of USDC on {N} on {C}, where the asset is supported. Borrow up to 20% only if an official points program counts borrowing and the health factor stays above 3', tx: 3, weeks: 8, mid: 'recheck health and repay the loan if its funding cost exceeds the plan' },
+    'Vaults & yield': { verb: 'On {C}, deposit up to {D} in an eligible {N} vault using its supported asset. Keep the shares.', tx: 2, weeks: 8, mid: 'verify recorded points and use the withdrawal preview to estimate exit costs' },
+    'Lending & CDP': { verb: 'Supply up to {D} in a supported market on {N} on {C}. Use a supply-only position; this plan has no borrowing budget.', tx: 3, weeks: 8, mid: 'confirm supply activity was credited and preview the full withdrawal' },
     'Trading': { verb: 'On {N} on {C}, quote a spot swap up to {Q}. Use a route credited to this protocol and keep the receipt, or skip if none is available', tx: 2, weeks: 6, mid: 'check the credited activity before repeating one small swap' },
     'Perps': { verb: 'On {N} on {C}, use an officially eligible market for one open-and-close trade up to {Q} at 1x; close the position the same day', tx: 3, weeks: 6, mid: 'verify eligible fills and use the same size for a second round trip only within the fee cap' },
     'RWA & stables': { verb: 'Subscribe {D} to {N}\'s main product on {C} after checking its minimum ticket and redemption window', tx: 2, weeks: 8, mid: 're-read the product page and confirm the position accrues; redeem nothing early' },
     'Staking': { verb: 'Stake {D} through {N}\'s own interface on {C}, choosing the option with no lock-up or the shortest one', tx: 2, weeks: 8, mid: 'claim or restake any reward once, a second dated action' },
-    'Infra & chains': { verb: 'Bridge {D} onto {N}{OC} and use 3 of its own apps: a swap, a lend and a liquidity position', tx: 6, weeks: 6, mid: 'repeat one swap and one deposit so activity spans more than one week' },
+    'Infra & chains': { verb: 'On {C}, verify an eligible {N} activity. Allocate up to {D} only where the docs list the route and action.', tx: 6, weeks: 6, mid: 'confirm credited activity and repeat it if the program is active' },
     'Other': { verb: 'Use {N}\'s core product on {C} with {D}: one deposit or action now', tx: 3, weeks: 6, mid: 'repeat the core action once so the address shows two dates' },
   };
 
@@ -149,20 +152,19 @@
     var cc = cheapestChain(r.chains), g = cc.gas;
     var trading = r.family === 'Trading', pb = PLAY[/derivative|perp/i.test(r.category) ? 'Perps' : r.family], W = pb.weeks;
     var execution = trading ? D * 0.003 : 0;
-    var fill = function (s) { return s.replace(/\{OC\}/g, cc.chain === r.name ? '' : ' (' + cc.chain + ')').replace(/\{D\}/g, money(D)).replace(/\{Q\}/g, money(D / 4)).replace(/\{N\}/g, r.name).replace(/\{C\}/g, cc.chain); };
+    var fill = function (s) { return s.replace(/\{D\}/g, money(D)).replace(/\{Q\}/g, money(D / 4)).replace(/\{N\}/g, r.name).replace(/\{C\}/g, cc.chain); };
     var stop = Math.round(r.tvl * (1 - clamp(Math.abs(r.ch7 || 0) * 2 / 100, 0.1, 0.4)));
     var kyc = r.family === 'RWA & stables', d1 = kyc ? 3 : 1;
-    // at: the day a step falls on (weekly: every held week; neither: it fires only on an event).
     var steps = [
-      { when: 'day 0', at: 0, text: 'Open ' + r.name + ' from its DefiLlama listing, bookmark that domain, and read its docs on points, rewards and withdrawals; never use a link from a reply or DM.', cost: 0, min: 20 },
-      kyc ? { when: 'day 0', at: 0, text: 'Pass ' + r.name + '\'s KYC if it asks for one; allow 1 to 3 days before you deposit, and skip the row if it is closed to your country.', cost: 0, min: 30 }
-          : { when: 'day 0', at: 0, text: 'Note ' + r.name + '\'s minimum deposit and withdrawal delay; if funds lock for longer than ' + W + ' weeks, shrink the deposit or skip.', cost: 0, min: 10 },
-      { when: 'day ' + d1, at: d1, text: 'Move ' + money(D) + ' of USDC and about ' + money(Math.max(0.5, g * 10)) + ' of gas to one wallet on ' + cc.chain + ', the cheapest of up to three listed chains (one transaction there costs about ' + money(g) + ').', cost: 1 + g, min: 15 },
+      { when: 'day 0', at: 0, text: 'Find ' + r.name + ' on DefiLlama and bookmark its official site. Check rewards, eligible markets and withdrawal rules.', cost: 0, min: 20 },
+      kyc ? { when: 'day 0', at: 0, text: 'Check ' + r.name + '\'s region and identity requirements. Allow up to 3 days for approval if required.', cost: 0, min: 30 }
+          : { when: 'day 0', at: 0, text: 'Confirm ' + r.name + '\'s minimum and withdrawal delay. Skip if the lock exceeds ' + W + ' weeks.', cost: 0, min: 10 },
+      { when: 'day ' + d1, at: d1, text: 'Quote a route for ' + money(D) + ' in the accepted asset and ' + money(Math.max(0.5, g * 10)) + ' of native gas on ' + cc.chain + '. Fund only if the exact market and route are supported.', cost: 1 + g, min: 15 },
       { when: 'day ' + d1, at: d1, text: fill(pb.verb) + (trading ? '. Allow ' + money(execution / 2) + ' for execution fees and slippage, separate from gas.' : '.'), cost: g * pb.tx + execution / 2, min: 20 },
       { when: 'weekly x' + W, weekly: true, text: 'Each week, check ' + r.name + '\'s TVL on DefiLlama against the stop level ' + money(stop) + ' and log the position\'s balance and any points shown.', cost: 0, min: 5 * W },
       { when: 'day ' + Math.round(W * 3.5), at: Math.round(W * 3.5), text: 'Midway, ' + fill(pb.mid) + '.', cost: g * 2 + execution / 2, min: 15 },
       { when: 'any day', text: 'Stop rule: if TVL falls below ' + money(stop) + ', exit when withdrawals are available. If paused, cancel new deposits and track the official status.', cost: g * 2, min: 10 },
-      { when: 'day ' + W * 7, at: W * 7, text: 'After ' + W + ' weeks, withdraw the ' + money(D) + ' and bridge it back, unless a points season is announced that rewards holding longer.', cost: 1 + g * 2, min: 15 },
+      { when: 'day ' + W * 7, at: W * 7, text: 'At week ' + W + ', use the verified exit route and withdraw the position. Recalculate costs before extending the hold.', cost: 1 + g * 2, min: 15 },
       { when: 'if a token launches', text: 'Claim only through the domain bookmarked on day 0, never through a link someone sends you; sell or hold by your own rule, not the chart.', cost: g, min: 10 },
     ];
     var fees = steps.reduce(function (s, x) { return s + x.cost; }, 0);
@@ -172,7 +174,6 @@
     var odds = (fees + forgone) / slice, oddsLo = odds * r.implied / r.lo, oddsHi = odds * r.implied / r.hi;
     var verdict = oddsLo <= CFG.worth ? 'Worth farming' : oddsHi > CFG.marginal ? 'Skip' : 'Marginal';
     return { deposit: D, chain: cc.chain, gas: g, weeks: W, stop: stop, steps: steps, fees: fees, execution: execution, forgone: forgone, minutes: minutes, slice: slice, odds: odds, net_hour: (slice - fees - forgone) / (minutes / 60), verdict: verdict,
-      // The same arithmetic at the value band's two ends: how far the verdict leans on the point estimate.
       odds_lo: oddsLo, odds_hi: oddsHi };
   }
 
@@ -225,7 +226,8 @@
   function buildRadar(snap) {
     var asOf = snap.as_of, watch = {};
     snap.watchlist.forEach(function (s) { watch[s] = 1; });
-    var pts = [], rows = [];
+    var pts = [], rows = [], exclusions = {};
+    var stakedTokens = new Set(snap.protocols.filter(function (p) { return STAKED.includes(p.category); }).map(function (p) { return p.slug; }));
     var census = { ranked: 0, priced: 0, unpricedToken: 0, products: 0, unusable: 0 };
     snap.protocols.forEach(function (p) {
       if (p.mcap_usd > 0 && p.tvl_usd > 0) {
@@ -242,12 +244,17 @@
       var w = !!watch[p.slug];
       if (!w && p.tvl_usd <= 0) { census.unusable++; return; }
       if (!w && !isPreToken(p)) { census[p.mcap_usd > 0 ? 'priced' : 'unpricedToken']++; return; }
-      if (!w && isProduct(p)) { census.products++; return; }
+      var product = productType(p, stakedTokens);
+      if (!w && product) {
+        (exclusions[product] = exclusions[product] || []).push(p.name);
+        census.products++;
+        return;
+      }
       census.ranked++;
       var f = features(p, asOf), implied = Math.max(1, Math.round(Math.pow(10, predictLog(fit, f))));
       var size = Math.pow(10, fit.curve.a + fit.curve.b * f.x);
       rows.push({ slug: p.slug, name: p.name, category: p.category || 'Uncategorised', family: f.fam,
-        chains: p.chains, tvl: p.tvl_usd, ch7: p.change_7d, age: f.age, features: f, watch: w, above: p.tvl_usd >= snap.floor_usd,
+        chains: p.chains, tvl: p.tvl_usd, ch7: p.change_7d, age: f.age, features: f, product: product, watch: w, above: p.tvl_usd >= snap.floor_usd,
         f: { size: size, tilt: Math.pow(10, fit.tilts[f.fam].log), mom: Math.pow(10, fit.growth * f.g),
           season: Math.pow(10, fit.age * f.d), peers: fit.tilts[f.fam].peers }, implied: implied,
         lo: Math.max(1, Math.round(implied * Math.pow(10, bandLo))), hi: Math.round(implied * Math.pow(10, bandHi)) });
@@ -267,7 +274,6 @@
     rows.forEach(function (r, i) { r.rlo = Math.round(quantile(seen[i], 0.1)); r.rhi = Math.round(quantile(seen[i], 0.9)); r.plan = farmPlan(r); });
 
     var peersOf = function (r) {
-      // nearest by TVL among the family's peers inside the middle of its multiples, so one outlier never reads as the evidence
       var ms = pts.filter(function (p) { return p.fam === r.family; }).map(function (p) { return p.mcap / p.tvl; }), lo = quantile(ms, 0.1), hi = quantile(ms, 0.9);
       return pts.filter(function (p) { return p.fam === r.family && p.mcap / p.tvl >= lo && p.mcap / p.tvl <= hi; })
         .sort(function (a, b) { return Math.abs(a.x - L(r.tvl / 1e8)) - Math.abs(b.x - L(r.tvl / 1e8)); }).slice(0, 3)
@@ -276,7 +282,7 @@
     rows.forEach(function (r) { r.peers = peersOf(r); });
 
     return { cfg: CFG, as_of: asOf, source: snap.source, floor: snap.floor_usd, universe: snap.protocols.length, watch_n: snap.watchlist.length,
-      census: census, fit: fit, oos: oos, cohort: cohort, newer: outOfSample(pts, 'newer'), traded: pts, rows: rows };
+      census: census, exclusions: exclusions, fit: fit, oos: oos, cohort: cohort, newer: outOfSample(pts, 'newer'), traded: pts, rows: rows };
   }
 
   function boardRows(radar) {

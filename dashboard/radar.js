@@ -15,7 +15,7 @@
   var matched = M.boardRows(R).filter(function (row, i) { return same(row, B.rows[i]); }).length;
   var P0 = M.planPortfolio(R);
   var planOk = same(B.portfolio.picks, P0.picks.map(function (q) { return q.r.slug + ':' + q.deposit + ':' + q.start; }));
-  var censusOk = same(R.census, B.census) && Object.values(R.census).reduce(function (a, b) { return a + b; }, 0) === R.universe;
+  var censusOk = same(R.census, B.census) && same(R.exclusions, B.exclusions) && Object.values(R.exclusions).flat().length === R.census.products && Object.values(R.census).reduce(function (a, b) { return a + b; }, 0) === R.universe;
   var verified = matched === B.rows.length && matched === R.rows.length && planOk && censusOk;
   document.getElementById('stamp').innerHTML = 'DefiLlama snapshot ' + esc(R.as_of) + ' &middot; model ' + esc(R.cfg.version) +
     ' <span class="check ' + (verified ? 'ok' : 'bad') + '">' + (verified ? '&#10003;' : '&#10007;') + ' page = board.json: ' + matched + '/' + B.rows.length + ' rows' + (planOk ? ' + plan' : '') + (censusOk ? ' + census' : '') + '</span>';
@@ -123,12 +123,14 @@
         return '<tr><td>' + m[0] + '</td>' + [R.oos,R.cohort,R.newer].map(function (test) {
           return '<td class="num">&times;' + test[m[1]].toFixed(2) + '</td>';
         }).join('') + '</tr>';
-      }).join('') + '</tbody></table><p class="mute">The last row prices the board. Older listings train each newer cohort using the same snapshot. Bands use held-out errors; rank ranges use ' + R.cfg.boot + ' refits.</p></section>';
+      }).join('') + '</tbody></table><p class="mute">The last row prices the board. Split by listing date within the snapshot. Bands use held-out errors; ranks use ' + R.cfg.boot + ' refits.</p></section>';
   }
 
-  function planCard() {
-    return '<section class="card"><h3>Farm planner</h3><p class="mute">' + P0.picks.length +
-      ' modeled positions on ' + money(P0.opt.budget) + ' and ' + P0.opt.hours + ' hours per week.</p><a href="#view=plan">Open planner &rarr;</a></section>';
+  function coverageCard() {
+    return '<section class="card"><h3>Product exclusions</h3>' + Object.keys(R.exclusions).sort().map(function (reason) {
+      var names = R.exclusions[reason];
+      return '<details><summary>' + esc(reason) + ' · ' + names.length + '</summary><p>' + names.map(esc).join(', ') + '</p></details>';
+    }).join('') + '</section>';
   }
 
   function protocolLink(r) {
@@ -160,6 +162,7 @@
 
   function rowHtml(r) {
     var tag = r.watch ? '<span class="tag watch">Watchlist</span>' : '', f = r.f;
+    if (r.product) tag += '<span class="tag">' + esc(r.product) + '</span>';
     return '<tr data-slug="' + esc(r.slug) + '"><td class="num"><b>' + r.rank + '</b><small>' + r.rlo + '&ndash;' + r.rhi + '</small></td>' +
       '<td>' + protocolLink(r) + tag + '<small>' + esc(r.category) + ' &middot; ' + esc(r.chains.slice(0, 2).join(', ')) + (r.chains.length > 2 ? ' +' + (r.chains.length - 2) : '') + '</small></td>' +
       '<td class="num"><b class="val">' + usd(r.implied) + '</b><small>' + usd(r.lo) + '&ndash;' + usd(r.hi) + '</small></td>' +
@@ -197,7 +200,7 @@
       '<div class="scroll" tabindex="0" role="region" aria-label="Protocol rankings"><table class="board"><thead><tr>' + COLS.map(function (c) { return '<th scope="col" class="' + c[2] + '" data-sort="' + c[0] + '"' + (S.sort === c[0] ? ' aria-sort="' + (S.dir < 0 ? 'descending' : 'ascending') + '"' : '') + '><button id="sort-' + c[0] + '">' + c[1] + '</button></th>'; }).join('') + '</tr></thead><tbody>' +
       anchors.map(function (p) { return '<tr class="anchor"><td class="num">&ndash;</td><td>' + esc(p.name) + ' <span class="tag">trades</span><small>' + esc(p.category) + ' &middot; reference, not ranked</small></td><td class="num">' + usd(p.mcap) + '<small>market cap</small></td><td class="num">' + usd(p.tvl) + '</td><td colspan="4" class="mute">market ' + (p.mcap / p.tvl).toFixed(2) + '&times; TVL &middot; curve says ' + usd(Math.pow(10, M.predictLog(R.fit, p))) + '</td></tr>'; }).join('') +
       (rows.length ? rows.map(rowHtml).join('') : '<tr><td colspan="8" class="empty">No protocols match these filters.</td></tr>') +
-      '</tbody></table></div></section><aside class="lcol">' + howCard() + '<section class="card radar"><h3>Sector radar</h3>' + sweep(highlight) + '</section>' + planCard() + '</aside></div>';
+      '</tbody></table></div></section><aside class="lcol">' + howCard() + coverageCard() + '<section class="card radar"><h3>Sector radar</h3>' + sweep(highlight) + '</section>' + '</aside></div>';
     wire();
     app.querySelectorAll('.chip').forEach(function (b) { b.onclick = function () { go({ scope: b.dataset.v }); }; });
     app.querySelectorAll('th[data-sort] button').forEach(function (b) { b.onclick = function () { var k = b.parentNode.dataset.sort; go(S.sort === k ? { dir: -S.dir } : { sort: k, dir: k === 'rank' || k === 'name' || k === 'odds' ? 1 : -1 }); }; });
@@ -273,7 +276,7 @@
       return [money(p.deposit * size), money(cost), money(reward - cost), Math.round(100 * cost / reward) + '%'];
     });
     var tile = function (v, k, cls) { return '<div class="tile ' + (cls || '') + '"><b>' + v + '</b><span>' + k + '</span></div>'; };
-    app.innerHTML = '<a class="back" href="#">&larr; Board</a><div class="dhead"><h1>' + esc(r.name) + '</h1><span class="tag">records no token</span>' + (r.watch ? '<span class="tag watch">watchlist</span>' : '') + '<span class="tag">' + esc(r.category) + '</span><span class="tag">' + esc(r.chains.slice(0, 4).join(' · ')) + '</span> <button id="jump">Farm plan &darr;</button></div>' +
+    app.innerHTML = '<a class="back" href="#">&larr; Board</a><div class="dhead"><h1>' + esc(r.name) + '</h1><span class="tag">records no token</span>' + (r.watch ? '<span class="tag watch">watchlist</span>' : '') + (r.product ? '<span class="tag">' + esc(r.product) + '</span>' : '') + '<span class="tag">' + esc(r.category) + '</span><span class="tag">' + esc(r.chains.slice(0, 4).join(' · ')) + '</span> <button id="jump">Farm plan &darr;</button></div>' +
       '<div class="dgrid"><section class="card"><div class="hero"><div><span class="mute">Implied launch value</span><b class="big">' + usd(r.implied) + '</b></div>' +
       '<div><span class="mute">Rank &middot; P10&ndash;P90 of refits</span><b>' + r.rank + ' of ' + R.rows.length + ' &middot; ' + r.rlo + '&ndash;' + r.rhi + '</b></div><div><span class="mute">P25&ndash;P75 band</span><b>' + usd(r.lo) + '&ndash;' + usd(r.hi) + '</b></div></div>' +
       '<h3>Valuation factors</h3><div class="tiles">' + tile(usd(f.size), 'size curve at <b class="k-tvl">' + usd(r.tvl) + ' TVL</b>') + '<i>&times;</i>' + tile(f.tilt.toFixed(2), esc(r.family) + ' tilt, ' + f.peers + ' peers') + '<i>&times;</i>' +
