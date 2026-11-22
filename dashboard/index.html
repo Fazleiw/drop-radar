@@ -3,17 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drop Radar: pre-token protocols priced against the tokens that already trade</title>
+<title>Drop Radar | Pre-token protocol rankings</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="dot" aria-hidden="true"></span><b>Drop Radar</b><span class="sub">token launch radar</span>
-    <nav class="tabs" role="tablist"><button role="tab" data-view="board">Board</button><button role="tab" data-view="plan">Planner</button></nav></div>
+  <div class="brand"><i aria-hidden="true"></i><b>Drop Radar</b></div>
+  <nav class="tabs" aria-label="Workspace"><button data-view="board">Rankings</button><button data-view="plan">Farm planner</button></nav>
   <div class="stamp" id="stamp"></div>
 </header>
 <main id="app" tabindex="-1"></main>
-<footer class="foot">Implied values are this board's own claim from the snapshot, never make.fun's; nothing here says whether or when a token launches. DefiLlama recording no token is not proof there is none. Not investment advice.</footer>
+<p class="sr" id="notice" role="status"></p>
+<footer class="foot">Valuations assume a token launches. Farm economics use modeled fees and allocations.</footer>
 <script src="../data.js"></script>
 <script src="model.js"></script>
 <script src="radar.js"></script>
