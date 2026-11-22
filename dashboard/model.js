@@ -92,22 +92,36 @@
     return fit;
   }
 
-  function outOfSample(pts, byYear) {
-    var folds = new Map(), errors = [], flat = [];
-    pts.forEach(function (p) {
-      var k = byYear ? p.year : p.slug;
-      if (k) folds.set(k, (folds.get(k) || []).concat(p));
-    });
+  function outOfSample(pts, split) {
+    var folds = new Map(), errors = [], flat = [], size = [], family = [];
+    if (split === 'newer') {
+      var dated = pts.filter(function (p) { return p.age !== null; }).sort(function (a, b) { return b.age - a.age; });
+      [0.55, 0.70, 0.85, 1].map(function (q) { return Math.floor(q * dated.length); }).forEach(function (end, i, cuts) {
+        if (i) folds.set(i, dated.slice(cuts[i - 1], end));
+      });
+    } else {
+      pts.forEach(function (p) {
+        var k = split === 'year' ? p.year : p.slug;
+        if (k) folds.set(k, (folds.get(k) || []).concat(p));
+      });
+    }
+
     folds.forEach(function (test) {
-      var train = pts.filter(function (p) { return !test.includes(p); });
+      if (!test.length) return;
+      var train = pts.filter(function (p) {
+        return split === 'newer' ? p.age !== null && p.age > test[0].age : !test.includes(p);
+      });
       var f = fitAll(train), mult = median(train.map(function (p) { return p.y - p.x; }));
       test.forEach(function (p) {
         errors.push(p.y - predictLog(f, p));
-        flat.push(Math.abs(p.y - p.x - mult));
+        flat.push(p.y - p.x - mult);
+        size.push(p.y - f.curve.a - f.curve.b * p.x);
+        family.push(p.y - baseLog(f, p));
       });
     });
-    return { n: errors.length, folds: folds.size, median_miss: Math.pow(10, median(errors.map(Math.abs))),
-      flat_miss: Math.pow(10, median(flat)), band: [quantile(errors, 0.25), quantile(errors, 0.75)] };
+    var miss = function (a) { return Math.pow(10, median(a.map(Math.abs))); };
+    return { n: errors.length, folds: folds.size, median_miss: miss(errors), flat_miss: miss(flat),
+      size_miss: miss(size), family_miss: miss(family), band: [quantile(errors, 0.25), quantile(errors, 0.75)] };
   }
 
   // Farm scenarios
@@ -221,7 +235,7 @@
       }
     });
     pts.sort(function (a, b) { return a.slug.localeCompare(b.slug, 'en'); });
-    var fit = fitAll(pts), oos = outOfSample(pts, false), cohort = outOfSample(pts, true);
+    var fit = fitAll(pts), oos = outOfSample(pts), cohort = outOfSample(pts, 'year');
     var bandLo = Math.min(0, oos.band[0]), bandHi = Math.max(0, oos.band[1]);
 
     snap.protocols.forEach(function (p) {
@@ -262,7 +276,7 @@
     rows.forEach(function (r) { r.peers = peersOf(r); });
 
     return { cfg: CFG, as_of: asOf, source: snap.source, floor: snap.floor_usd, universe: snap.protocols.length, watch_n: snap.watchlist.length,
-      census: census, fit: fit, oos: oos, cohort: cohort, traded: pts, rows: rows };
+      census: census, fit: fit, oos: oos, cohort: cohort, newer: outOfSample(pts, 'newer'), traded: pts, rows: rows };
   }
 
   function boardRows(radar) {

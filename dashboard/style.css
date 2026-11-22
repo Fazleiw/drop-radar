@@ -65,8 +65,6 @@ h1 { margin: 0; font: 500 clamp(34px, 4vw, 53px)/1.04 Georgia, serif; letter-spa
 .card { min-width: 0; padding: 15px; border: 1px solid var(--line); background: var(--white); }
 .card h3 { margin: 0 0 8px; font-size: 15px; }
 .card p { margin: 8px 0; }
-.how { margin: 0; padding-left: 18px; }
-.how li + li { margin-top: 6px; }
 
 .filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .filters input[type=search], .filters select, .inputs input {

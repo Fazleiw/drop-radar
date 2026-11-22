@@ -113,19 +113,17 @@
       [R.universe, a.priced + ' priced · ' + a.unpricedToken + ' token, no cap · ' + a.products + ' products' + (a.unusable ? ' · ' + a.unusable + ' missing TVL' : '')],
       ['&times;' + R.oos.median_miss.toFixed(2), 'leave one out · ' + R.oos.n + ' traded peers'],
       ['&times;' + R.cohort.median_miss.toFixed(2), 'leave one listing year out · ' + R.cohort.n + ' dated peers'],
-      [R.rows.filter(function (r) { return r.plan.verdict === 'Worth farming'; }).length, 'worth farming at the low-end estimate'],
+      ['&times;' + R.newer.median_miss.toFixed(2), 'older to newer · ' + R.newer.n + ' dated peers'],
     ].map(function (k) { return '<div><b>' + k[0] + '</b><span>' + k[1] + '</span></div>'; }).join('') + '</section>';
   }
 
   function howCard() {
-    var f = R.fit, o = R.oos, y = R.cohort;
-    return '<section class="card"><h3>Valuation and validation</h3><ol class="how">' +
-      '<li><b>Size</b> = 10 to the power of (' + f.curve.a.toFixed(3) + ' + ' + f.curve.b.toFixed(3) + ' &times; log10(TVL / $100M)). Curve refit with capped errors.</li>' +
-      '<li><b>Family</b> = shrunk median residual for the category family, with ' + R.cfg.shrink_k + ' neutral pseudo-peers.</li>' +
-      '<li><b>7-day growth and age</b> = fitted log-price adjustments (' + f.growth.toFixed(4) + ', ' + f.age.toFixed(4) + '). Growth units: 25 percentage points, clipped at −25% and +40%. Age units: log10(days / 365), clipped at ±1. Missing inputs are neutral.</li></ol>' +
-      '<p class="mute">Every fold refits the full model. Median error vs flat mcap/TVL: &times;' + o.median_miss.toFixed(2) + ' vs &times;' + o.flat_miss.toFixed(2) +
-      ' by protocol; &times;' + y.median_miss.toFixed(2) + ' vs &times;' + y.flat_miss.toFixed(2) + ' across ' + y.folds +
-      ' held-out listing years. P25–P75 uses held-out residuals; rank range uses ' + R.cfg.boot + ' seeded refits. Values are conditional on a launch.</p></section>';
+    return '<section class="card"><h3>Held-out valuation error</h3><p class="mute">Median multiple miss. Lower is better.</p><table><thead><tr><th>Model</th><th>One<br>out</th><th>Year<br>out</th><th>Older<br>to newer</th></tr></thead><tbody>' +
+      [['Flat cap/TVL','flat_miss'],['TVL curve','size_miss'],['+ family','family_miss'],['+ growth &amp; age','median_miss']].map(function (m) {
+        return '<tr><td>' + m[0] + '</td>' + [R.oos,R.cohort,R.newer].map(function (test) {
+          return '<td class="num">&times;' + test[m[1]].toFixed(2) + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</tbody></table><p class="mute">The last row prices the board. Older listings train each newer cohort using the same snapshot. Bands use held-out errors; rank ranges use ' + R.cfg.boot + ' refits.</p></section>';
   }
 
   function planCard() {
@@ -196,10 +194,10 @@
       '<label class="tog"><input type="checkbox" id="anch"' + (S.anchors ? ' checked' : '') + '> Traded peers</label></div>' +
       '<div class="count"><span><b>' + rows.length + '</b> of ' + R.rows.length + ' protocols' + (anchors.length ? ' &middot; ' + anchors.length + ' traded peers' : '') + '</span>' +
       (hasFilters ? '<button id="clear">Reset filters</button>' : '') + '</div>' +
-      '<div class="scroll" tabindex="0" role="region" aria-label="Protocol rankings table"><table class="board"><thead><tr>' + COLS.map(function (c) { return '<th scope="col" class="' + c[2] + '" data-sort="' + c[0] + '"' + (S.sort === c[0] ? ' aria-sort="' + (S.dir < 0 ? 'descending' : 'ascending') + '"' : '') + '><button id="sort-' + c[0] + '">' + c[1] + '</button></th>'; }).join('') + '</tr></thead><tbody>' +
+      '<div class="scroll" tabindex="0" role="region" aria-label="Protocol rankings"><table class="board"><thead><tr>' + COLS.map(function (c) { return '<th scope="col" class="' + c[2] + '" data-sort="' + c[0] + '"' + (S.sort === c[0] ? ' aria-sort="' + (S.dir < 0 ? 'descending' : 'ascending') + '"' : '') + '><button id="sort-' + c[0] + '">' + c[1] + '</button></th>'; }).join('') + '</tr></thead><tbody>' +
       anchors.map(function (p) { return '<tr class="anchor"><td class="num">&ndash;</td><td>' + esc(p.name) + ' <span class="tag">trades</span><small>' + esc(p.category) + ' &middot; reference, not ranked</small></td><td class="num">' + usd(p.mcap) + '<small>market cap</small></td><td class="num">' + usd(p.tvl) + '</td><td colspan="4" class="mute">market ' + (p.mcap / p.tvl).toFixed(2) + '&times; TVL &middot; curve says ' + usd(Math.pow(10, M.predictLog(R.fit, p))) + '</td></tr>'; }).join('') +
       (rows.length ? rows.map(rowHtml).join('') : '<tr><td colspan="8" class="empty">No protocols match these filters.</td></tr>') +
-      '</tbody></table></div></section><aside class="lcol"><section class="card radar"><h3>Sector radar</h3>' + sweep(highlight) + '</section>' + howCard() + planCard() + '</aside></div>';
+      '</tbody></table></div></section><aside class="lcol">' + howCard() + '<section class="card radar"><h3>Sector radar</h3>' + sweep(highlight) + '</section>' + planCard() + '</aside></div>';
     wire();
     app.querySelectorAll('.chip').forEach(function (b) { b.onclick = function () { go({ scope: b.dataset.v }); }; });
     app.querySelectorAll('th[data-sort] button').forEach(function (b) { b.onclick = function () { var k = b.parentNode.dataset.sort; go(S.sort === k ? { dir: -S.dir } : { sort: k, dir: k === 'rank' || k === 'name' || k === 'odds' ? 1 : -1 }); }; });
@@ -246,7 +244,7 @@
         return '<tr data-slug="' + esc(q.r.slug) + '"><td>' + esc(q.r.name) + '</td>' + cells + '</tr>';
       }).join('') +
       '<tr class="sum"><td>Minutes that week</td>' + P.load.map(function (m) { return '<td class="num' + (m > cap * 0.8 ? ' hot' : '') + '">' + Math.round(m) + '</td>'; }).join('') + '</tr></tbody></table>' +
-      '<p class="mute tiny">Numbers link to plan steps. Dots mark weekly checks. Event-driven steps have no fixed week.</p></section>' +
+      '<p class="mute tiny">Numbers mark plan steps. Dots mark weekly checks.</p></section>' +
       '<section class="card"><h3>Next in line, left out</h3><table class="mini"><thead><tr><th>Protocol</th><th>Verdict</th><th class="num">Low slice / $</th><th>Why it is out</th></tr></thead><tbody>' +
       Object.keys(reasons).map(function (k) { return reasons[k].slice(0, 3).map(function (x) { return '<tr data-slug="' + esc(x.r.slug) + '"><td>' + esc(x.r.name) + ' <span class="mute">' + esc(x.r.family) + '</span></td><td><span class="verdict ' + VCLASS[x.r.plan.verdict] + '">' + x.r.plan.verdict + '</span></td><td class="num">&times;' + x.score.toFixed(2) + '</td><td>' + esc(x.why) + ' <span class="mute">(' + reasons[k].length + ' rows)</span></td></tr>'; }).join(''); }).join('') + '</tbody></table></section></div>' +
       '<div><section class="card"><h3>Chosen positions on the radar</h3>' + sweep(hl) + '</section><section class="card"><h3>Budget by family, cap ' + Math.round(o.family_cap * 100) + '%</h3>' +
@@ -270,6 +268,10 @@
 
   function detail(r) {
     var p = r.plan, f = r.f, mine = P0.picks.filter(function (q) { return q.r === r; })[0];
+    var cases = [0.5, 1, 2].map(function (size) {
+      var cost = p.fees - p.execution + size * (p.execution + p.forgone), reward = p.slice * size;
+      return [money(p.deposit * size), money(cost), money(reward - cost), Math.round(100 * cost / reward) + '%'];
+    });
     var tile = function (v, k, cls) { return '<div class="tile ' + (cls || '') + '"><b>' + v + '</b><span>' + k + '</span></div>'; };
     app.innerHTML = '<a class="back" href="#">&larr; Board</a><div class="dhead"><h1>' + esc(r.name) + '</h1><span class="tag">records no token</span>' + (r.watch ? '<span class="tag watch">watchlist</span>' : '') + '<span class="tag">' + esc(r.category) + '</span><span class="tag">' + esc(r.chains.slice(0, 4).join(' · ')) + '</span> <button id="jump">Farm plan &darr;</button></div>' +
       '<div class="dgrid"><section class="card"><div class="hero"><div><span class="mute">Implied launch value</span><b class="big">' + usd(r.implied) + '</b></div>' +
@@ -278,14 +280,15 @@
       tile(f.mom.toFixed(2), '<b class="k-g">7-day TVL ' + (r.ch7 === null ? 'n/a' : (r.ch7 >= 0 ? '+' : '') + r.ch7.toFixed(1) + '%') + '</b>') + '<i>&times;</i>' + tile(f.season.toFixed(2), '<b class="k-d">' + (r.age === null ? 'age unknown' : r.age + ' days') + '</b> tracked') + '<i>=</i>' + tile(usd(r.implied), 'implied value', 'res') + '</div>' +
       '<h3 id="peers">Traded peers in the same family</h3><div class="scroll peers" role="region" aria-labelledby="peers" tabindex="0"><table class="mini"><thead><tr><th>Token that trades</th><th class="num">TVL</th><th class="num">Mcap</th><th class="num">&times; TVL</th><th class="num">Applied here</th></tr></thead><tbody>' +
       r.peers.map(function (q) { return '<tr><td>' + esc(q.name) + (q.symbol ? ' <span class="mute">$' + esc(q.symbol) + '</span>' : '') + '</td><td class="num">' + usd(q.tvl) + '</td><td class="num">' + usd(q.mcap) + '</td><td class="num">' + (q.mcap / q.tvl).toFixed(2) + '&times;</td><td class="num">' + usd(q.mcap / q.tvl * r.tvl) + '</td></tr>'; }).join('') + '</tbody></table>' +
-      '</div><h3>Farm economics</h3><div class="arith">Slice if a token launches = ' + Math.round(R.cfg.drop_share * 100) + '% airdrop &times; ' + usd(r.implied) + ' &times; ' + money(p.deposit) + ' / ' + usd(r.tvl) + ' TVL = <b>' + money(p.slice) + '</b> (band ' + money(p.slice * r.lo / r.implied) + '&ndash;' + money(p.slice * r.hi / r.implied) + ')<br>Break-even = (' + money(p.fees) + ' fees + ' + money(p.forgone) + ' income forgone at ' + Math.round(R.cfg.tbill * 100) + '% a year for ' + p.weeks + ' weeks) / ' + money(p.slice) + ' = <b>' + Math.round(p.odds * 100) + '%</b>: the chance of a launch, with a snapshot, inside the hold that pays for the plan. At the band\'s ends: ' + Math.round(p.odds_hi * 100) + '% to ' + Math.round(p.odds_lo * 100) + '%.</div>' +
-      '<p class="mute">' + (p.odds_lo <= R.cfg.worth ? 'Worth farming even at the band\'s low end.' : p.odds_hi > R.cfg.marginal ? 'A skip even if the value lands at the band\'s high end.' : 'Marginal. Low-end break-even exceeds 25%, while high-end break-even is at most 60%.') + '</p>' +
-      '<div class="inplan">' + (mine ? 'In the default <a href="#view=plan">portfolio</a>: ' + money(mine.deposit) + ' from week ' + (mine.start + 1) + ', slice ' + money(mine.slice) + '.' : 'Not in the default <a href="#view=plan">' + money(P0.opt.budget) + ' portfolio</a>' + (p.verdict === 'Skip' ? ': a Skip.' : ': other rows pay more per dollar and hour.')) + '</div></section>' +
+      '</div><h3>Farm economics</h3><div class="arith">Modeled payout: ' + Math.round(R.cfg.drop_share * 100) + '% of launch value × deposit / TVL. Costs include gas, execution, and ' + Math.round(R.cfg.tbill * 100) + '% annual opportunity cost. To cover costs, the required chance of payout spans <b>' + Math.round(p.odds_hi * 100) + '%–' + Math.round(p.odds_lo * 100) + '%</b> across the value band.</div>' +
+      '<table class="mini"><thead><tr><th>Deposit</th><th>Cost</th><th>Net if paid</th><th>Break-even</th></tr></thead><tbody>' +
+      cases.map(function (row) { return '<tr><td>' + row.join('</td><td>') + '</td></tr>'; }).join('') + '</tbody></table>' +
+      '<div class="inplan"><a href="#view=plan">Farm planner</a>' + (mine ? ' · ' + money(mine.deposit) + ' from week ' + (mine.start + 1) : '') + '</div></section>' +
       '<section class="card" id="steps" tabindex="-1"><div class="plhead"><h3>Farm plan &middot; ' + esc(p.chain) + ' &middot; ' + money(p.deposit) + ' &middot; ' + p.weeks + ' weeks</h3><span class="verdict ' + VCLASS[p.verdict] + '">' + p.verdict + '</span></div>' + timeline(p) +
       '<table class="plan"><thead><tr><th>#</th><th>When</th><th>Step</th><th class="num">Cost</th><th class="num">Time</th></tr></thead><tbody>' +
       p.steps.map(function (s, i) { return '<tr' + (/^Stop rule/.test(s.text) ? ' class="stoprow"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(s.when) + '</td><td>' + esc(s.text) + '</td><td class="num">' + money(s.cost) + '</td><td class="num">' + s.min + ' min</td></tr>'; }).join('') + '</tbody></table>' +
       '<div class="totals">' + [[money(p.fees), 'fees and gas'], [money(p.forgone), 'income forgone'], [p.minutes + ' min', 'your time'], [money(p.slice), 'slice if launch'], [Math.round(p.odds * 100) + '%', 'break-even odds'], [money(p.net_hour), 'net per hour if launch']].map(function (t) { return '<div><span>' + t[1] + '</span><b>' + t[0] + '</b></div>'; }).join('') + '</div>' +
-      '<ul class="rules"><li>One wallet, your own funds; never split one position across wallets.</li><li>Claim only through the domain bookmarked on day 0.</li><li>Farm steps are scenarios. Verify asset support, fees and eligibility before depositing.</li></ul></section></div>';
+      '<ul class="rules"><li>One wallet, your own funds; never split one position across wallets.</li><li>Claim only through the domain bookmarked on day 0.</li><li>Verify asset support, fees and eligibility.</li></ul></section></div>';
     app.querySelector('#jump').onclick = function () { app.querySelector('#steps').focus(); };
   }
 
