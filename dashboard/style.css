@@ -1,5 +1,5 @@
-/* Drop Radar:ink and paper-white type, teal for the model, amber for value, a verdict scale of three;
-blue, violet and orange key the snapshot's three figures (TVL, 7-day growth, days with no token). */
+/* Drop Radar: ink and paper-white type; teal for the model, amber for value, three verdict colours;
+blue keys the launch price, orange the token odds, violet the figures behind them. */
 :root{
 --ink:#0c1220;--panel:#121b2d;--panel2:#18243b;--line:#24324d;
 --text:#e8edf6;--mute:#8e9cb5;--teal:#3fe0c0;--amber:#ffb547;--rose:#ff6f86;--violet:#a28dff;--k:var(--text);
@@ -43,7 +43,6 @@ ol.how{margin:0;padding-left:18px} ol.how li{margin:3px 0}
 .chip[aria-pressed="true"]{background:var(--text);color:var(--ink);border-color:var(--text);font-weight:600}
 .filters input[type=search],.filters select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 10px}
 .filters input[type=search]{width:190px}
-.tog{color:var(--mute);font-size:12.5px}
 .count{margin:6px 0 8px}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:7px 8px;border-bottom:1px solid var(--text);cursor:pointer;white-space:nowrap}
@@ -52,7 +51,6 @@ td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
 td small{display:block;color:var(--mute);font-size:11.5px}
 .num{text-align:right;font-family:var(--mono);white-space:nowrap}
 tbody tr[data-slug]{cursor:pointer} tbody tr[data-slug]:hover{background:rgba(63,224,192,.05)}
-tr.anchor td{color:var(--mute);background:rgba(255,255,255,.02)}
 .val{color:var(--amber)}
 .tag{display:inline-block;font-size:10.5px;padding:0 6px;border-radius:5px;border:1px solid var(--line);color:var(--mute);margin-left:4px;vertical-align:1px}
 .tag.watch{color:var(--amber);border-color:rgba(255,181,71,.55)} .tag.early{color:var(--violet);border-color:rgba(162,141,255,.5)}
@@ -75,14 +73,10 @@ tr.anchor td{color:var(--mute);background:rgba(255,255,255,.02)}
 table.mini th{cursor:default;border-bottom-color:var(--line)}
 .arith{border-left:3px solid var(--teal);background:var(--panel2);padding:8px 11px;border-radius:0 8px 8px 0;font-size:12.5px}
 .plhead{display:flex;justify-content:space-between;align-items:center}
-svg.tl{width:100%;height:auto;margin:4px 0 2px}
-svg.tl line{stroke:var(--line);stroke-width:2} svg.tl circle{fill:var(--teal)}
-svg.tl text{fill:var(--mute);font:9px var(--mono);text-anchor:middle} svg.tl text.n{fill:var(--ink);font-weight:700} svg.tl text.stop{fill:var(--rose);text-anchor:start}
 table.plan td{font-size:12.3px} table.plan th{cursor:default}
 tr.stoprow td{color:var(--rose)}
 .totals{display:grid;grid-template-columns:repeat(6, 1fr);gap:8px;margin-top:10px;border-top:1px solid var(--text);padding-top:8px}
 .totals span{display:block;color:var(--mute);font-size:11px} .totals b{font:700 15px var(--mono)}
-ul.rules{margin:10px 0 0;padding:8px 10px 8px 26px;background:rgba(63,224,192,.07);border-radius:8px;color:var(--mute);font-size:12px}
 .foot{padding:6px 22px 18px;color:var(--mute);font-size:11.5px}
 .k-tvl{--k:#5aa9ff} .k-g{--k:#b18cff} .k-d{--k:#ff8a4c}
 b.k-tvl,b.k-g,b.k-d,th.k-tvl,th.k-g,th.k-d{color:var(--k)}
@@ -107,14 +101,7 @@ svg.sweep{width:100%;height:auto;display:block;margin:-4px 0 2px}
 .dot circle{fill:currentColor;fill-opacity:.85;stroke:var(--ink);stroke-width:.6} .dot:hover circle{stroke:#fff}
 .dot .wl{fill:none;stroke:var(--text);stroke-width:1.1}
 .sweep .lab{fill:var(--text);font:600 13px var(--sans);paint-order:stroke;stroke:var(--ink);stroke-width:3px;pointer-events:none}
-.ptot{display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin:6px 0}
-.ptot span,.ptot small,.totals small{display:block;color:var(--mute);font-size:11px} .ptot b{font:700 17px var(--mono)}
-ol.picks{margin:6px 0;padding:0;list-style:none}
-ol.picks li{display:flex;gap:6px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--line);cursor:pointer;font-size:12.5px}
-ol.picks li .num{margin-left:auto;color:var(--amber)}
-.load{position:relative;background:var(--panel2);border-radius:4px;margin-top:8px;border-top:1px dashed var(--rose)}
-.load i{position:absolute;bottom:0;background:var(--teal);opacity:.7;border-radius:2px 2px 0 0}
-.ptop{display:flex;justify-content:space-between;gap:24px;align-items:center;margin-bottom:12px}
+.totals small{display:block;color:var(--mute);font-size:11px} .ptop{display:flex;justify-content:space-between;gap:24px;align-items:center;margin-bottom:12px}
 .ptop h2{margin:0 0 4px;font-size:22px} .ptop p{margin:0;max-width:860px}
 .inputs{display:flex;gap:10px}
 .inputs label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--mute)}
@@ -129,9 +116,9 @@ table.cal td{padding:4px;text-align:center;font:11px var(--mono)}
 table.cal td:first-child{text-align:left;font:12px var(--sans);white-space:nowrap}
 .cal td.on{background:rgba(63,224,192,.08);color:var(--mute)} .cal td.st{background:rgba(63,224,192,.3);color:var(--text);font-weight:700}
 .cal tr.sum td{border-top:1px solid var(--text);font-weight:700} .cal td.hot{color:var(--amber)}
-.fbar{display:grid;grid-template-columns:110px 1fr 64px;gap:8px;align-items:center;font-size:12px;margin:5px 0}
-.fbar i{height:10px;background:var(--panel2);border-radius:5px 0 0 5px;overflow:hidden;border-right:2px solid var(--rose)}
-.fbar b{display:block;height:100%;background:var(--teal)} .fbar em{font:normal 12px var(--mono);text-align:right}
 .warn{color:var(--amber)}
 .inplan{margin-top:8px;padding:7px 10px;border:1px dashed var(--line);border-radius:8px;font-size:12.5px}
 @media (max-width: 1100px){.cards,.dgrid,.hgrid,.pgrid{grid-template-columns:1fr} .kpis{grid-template-columns:repeat(3, 1fr)} .ptop{flex-wrap:wrap} }
+h4{margin:12px 0 4px;font-size:12px;color:var(--mute);font-weight:600}
+.tests tr.kept td{color:var(--text)} .tests td{color:var(--mute)} .tests tr.kept td:last-child{color:var(--teal)}
+.stopline{color:var(--rose);font:12px var(--mono);margin:6px 0}

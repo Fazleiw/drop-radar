@@ -72,7 +72,7 @@ const portfolio = {
   budget: pf.opt.budget, hours_per_week: pf.opt.hours, time_usd_per_hour: pf.opt.rate,
   picks: pf.picks.map((q: { r: { slug: string }; deposit: number; start: number }) => `${q.r.slug}:${q.deposit}:${q.start}`),
   deposit_usd: pf.deposit, fees_usd: Math.round(pf.fees), forgone_usd: Math.round(pf.forgone), minutes: pf.minutes,
-  slice_usd: Math.round(pf.slice), slice_band_usd: [Math.round(pf.lo), Math.round(pf.hi)],
+  expected_drop_usd: Math.round(pf.slice), drop_band_usd: [Math.round(pf.lo), Math.round(pf.hi)],
 };
 const board = { model: radar.cfg.version, as_of: snapshot.as_of, portfolio, rows };
 mkdirSync(out, { recursive: true });
@@ -103,8 +103,9 @@ writeFileSync(
   buildDossier(out, { text_max_bytes: 65_536, screenshots: { max: 4, max_bytes: 524_288 }, dashboard: { max_files: 400, max_bytes: 4_194_304 } }),
 );
 
-const o = radar.oos;
+const price = radar.price[radar.pk].test, odds = radar.oddsTests.filter((s: { kept?: boolean }) => s.kept).pop().test;
 process.stdout.write(
   `drop radar: ${radar.universe} protocols, ${radar.traded.length} traded anchors, ${rows.length} pre-token rows, ${radar.set_aside} set aside; ` +
-    `leave-one-out miss x${o.median_miss.toFixed(2)} (flat multiple x${o.flat_miss.toFixed(2)}); portfolio ${pf.picks.length} positions; ${pages.length} page files, ${shots.length} screenshots\n`,
+    `price miss x${price.first.miss.toFixed(2)} one out, x${price.walk.miss.toFixed(2)} older to newer; odds Brier ${odds.first.brier.toFixed(3)} / ${odds.walk.brier.toFixed(3)}; ` +
+    `portfolio ${pf.picks.length} positions; ${pages.length} page files, ${shots.length} screenshots\n`,
 );
