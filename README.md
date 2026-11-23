@@ -16,7 +16,9 @@ Every value carries a P25–P75 band from held-out misses and a rank range from 
 - **Marginal:** the odds clear it at the point price.
 - **Skip:** they do not.
 
-Products and other product lines of brands whose token trades are set aside off the watchlist. The page recomputes the board with the same model.js and checks it against board.json.
+Products and other product lines of brands whose token trades are set aside off the watchlist. The board puts each of the snapshot's 758 protocols in exactly one group and shows how many newer caps land inside the printed bands.
+
+The page recomputes the board with the same model.js and checks it against board.json: rows, rank order, totals, watchlist and ledger.
 
 Entry for make.fun's [Build the best token launch radar](https://make.fun/bounty/token-radar-01) bounty.
 

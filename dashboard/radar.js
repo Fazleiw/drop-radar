@@ -1,5 +1,5 @@
 // Drop Radar page: reruns model.js on the sealed snapshot (../data.js), checks it against board.json row by row,
-// and renders the board, its radar sweep, a detail view per protocol and the planner. State: the URL hash.
+// and renders the board with its protocol accounting and radar sweep, and a detail view per protocol. State: the URL hash.
 (function () {
   'use strict';
   var M = window.DropRadar, R = M.buildRadar(window.SNAPSHOT), B = window.BOARD;
@@ -7,22 +7,20 @@
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); };
   var usd = function (x) { return x >= 1e9 ? '$' + (x / 1e9).toFixed(2) + 'B' : x >= 1e6 ? '$' + (x / 1e6).toFixed(1) + 'M' : x >= 1e3 ? '$' + Math.round(x / 1e3) + 'K' : '$' + Math.round(x); };
   var pct = function (x) { return x === null ? '<span class="mute">n/a</span>' : '<span class="' + (x >= 0 ? 'up' : 'down') + '">' + (x >= 0 ? '+' : '') + x.toFixed(1) + '%</span>'; };
-  var hrs = function (m) { return (m / 60).toFixed(1) + ' h'; };
   var VCLASS = { 'Worth farming': 'v-worth', 'Marginal': 'v-marg', 'Skip': 'v-skip' };
   var bySlug = {}; R.rows.forEach(function (r) { bySlug[r.slug] = r; });
 
-  // board.json = this page: every rank, value and farm plan, and the default portfolio, against the files main.ts wrote.
+  // board.json = this page: every rank, value and farm plan, against the file main.ts wrote.
   var matched = 0;
   R.rows.forEach(function (r, i) {
     var b = B.rows[i], steps = M.boardRows({ rows: [r] })[0].farm_steps;
     if (b && b.slug === r.slug && b.rank === r.rank && b.implied_value_usd === r.implied && b.farm_steps.join('|') === steps.join('|')) matched++;
   });
-  var P0 = M.planPortfolio(R), planOk = B.portfolio && B.portfolio.picks.join('|') === P0.picks.map(function (q) { return q.r.slug + ':' + q.deposit + ':' + q.start; }).join('|');
-  var verified = matched === B.rows.length && matched === R.rows.length && planOk;
+  var verified = matched === B.rows.length && matched === R.rows.length;
   document.getElementById('stamp').innerHTML = 'DefiLlama snapshot ' + esc(R.as_of) + ' &middot; model ' + esc(R.cfg.version) +
-    ' <span class="check ' + (verified ? 'ok' : 'bad') + '">' + (verified ? '&#10003;' : '&#10007;') + ' page = board.json: ' + matched + '/' + B.rows.length + ' rows' + (planOk ? ' + plan' : '') + '</span>';
+    ' <span class="check ' + (verified ? 'ok' : 'bad') + '">' + (verified ? '&#10003;' : '&#10007;') + ' page = board.json: ' + matched + '/' + B.rows.length + ' rows</span>';
 
-  var D = { view: 'board', q: '', fam: '', chain: '', scope: 'all', verdict: '', sort: 'implied', dir: -1, p: '', budget: '', hours: '', rate: '' };
+  var D = { q: '', fam: '', chain: '', scope: 'all', verdict: '', sort: 'implied', dir: -1, p: '' };
   var S = JSON.parse(JSON.stringify(D));
   function readHash() {
     location.hash.replace(/^#/, '').split('&').forEach(function (kv) {
@@ -37,7 +35,6 @@
     history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname);
     render();
   }
-  function plan() { return M.planPortfolio(R, { budget: S.budget, hours: S.hours, rate: S.rate }); }
   function wire() {
     app.querySelectorAll('[data-slug]').forEach(function (el) { el.onclick = function () { go({ p: el.dataset.slug }); }; });
     app.querySelectorAll('[data-fam]').forEach(function (el) { el.onclick = function () { go({ view: 'board', fam: S.fam === el.dataset.fam ? '' : el.dataset.fam }); }; });
@@ -102,12 +99,27 @@
     var p = R.price[R.pk].test, p0 = R.price[0].test, o = R.oddsTests.filter(function (s) { return s.kept; }).pop().test, o0 = R.oddsTests[0].test;
     return '<section class="kpis">' + [
       [w + '/' + R.watch_n, 'watchlist ranked, every slug'],
-      [R.rows.length, 'ranked: record no token &middot; ' + R.set_aside + ' set aside: products, brands that trade'],
-      [R.traded.length, 'already trade: price the launch, never ranked'],
+      [R.rows.length, 'ranked: record no token, not a product of one that trades'],
       ['&times;' + p.first.miss.toFixed(2) + ' &middot; &times;' + p.walk.miss.toFixed(2), 'price miss, one out &middot; older&rarr;newer (flat &times;' + p0.first.miss.toFixed(2) + ' &middot; &times;' + p0.walk.miss.toFixed(2) + ')'],
       [o.first.brier.toFixed(3) + ' &middot; ' + o.walk.brier.toFixed(3), 'odds Brier, ten folds &middot; older&rarr;newer (base rate ' + o0.first.brier.toFixed(3) + ' &middot; ' + o0.walk.brier.toFixed(3) + ')'],
+      [Math.round(R.cover[0].walk * 100) + '% &middot; ' + Math.round(R.cover[1].walk * 100) + '%', 'newer caps inside the printed P25&ndash;P75 &middot; P10&ndash;P90 (stated 50% &middot; 80%)'],
       [worth, 'worth farming: odds beat break-even at the low price'],
     ].map(function (k) { return '<div><b>' + k[0] + '</b><span>' + k[1] + '</span></div>'; }).join('') + '</section>';
+  }
+
+  // Every snapshot protocol in exactly one group, and the checks this page reruns against board.json.
+  var LCOL = ['#3fe0c0', '#2aa98f', '#1b6f61', '#ffb547', '#8a6a3a', '#ff6f86', '#a28dff', '#7d6bd1', '#5b5a9e', '#6f7d96', '#3a4660'];
+  function ledger() {
+    var g = R.ledger, keys = M.LEDGER.filter(function (k) { return g[k]; }), n = keys.reduce(function (s, k) { return s + g[k]; }, 0);
+    var sum = function (a, f) { return a.reduce(function (s, r) { return s + r[f]; }, 0); }, w = R.rows.filter(function (r) { return r.watch; }).length;
+    var desc = R.rows.every(function (r, i) { return r.rank === i + 1 && (!i || r.implied <= R.rows[i - 1].implied); });
+    var col = function (k) { return LCOL[M.LEDGER.indexOf(k)]; };
+    var chk = [[verified, 'this table = board.json: ' + matched + ' of ' + B.rows.length + ' rows recomputed here'], [desc, 'ranks 1&ndash;' + R.rows.length + ' in order, values never rise'],
+      [sum(R.rows, 'implied') === sum(B.rows, 'implied_value_usd'), 'totals equal: ' + usd(sum(R.rows, 'implied'))], [w === R.watch_n, 'watchlist ' + w + ' of ' + R.watch_n + ' ranked'], [n === R.universe, 'ledger ' + n + ' of ' + R.universe + ' protocols']];
+    return '<section class="card ledger"><div class="plhead"><h3>Protocol accounting <code>buildRadar()</code></h3><span class="mute tiny">all ' + R.universe + ' snapshot protocols, each in exactly one group</span></div><div class="lbar">' +
+      keys.map(function (k) { return '<i style="flex:' + g[k] + ';background:' + col(k) + '" title="' + esc(k) + ': ' + g[k] + '"></i>'; }).join('') + '</div><div class="lkey">' +
+      keys.map(function (k) { return '<span><i style="background:' + col(k) + '"></i>' + esc(k) + ' <b>' + g[k] + '</b></span>'; }).join('') + '</div><div class="lkey">' +
+      chk.map(function (c) { return '<span class="check ' + (c[0] ? 'ok' : 'bad') + '">' + (c[0] ? '&#10003; ' : '&#10007; ') + c[1] + '</span>'; }).join('') + '</div></section>';
   }
 
   // Every term of both fits, in the order it was tried, with its two held-out scores and whether it stayed.
@@ -163,7 +175,7 @@
     R.rows.forEach(function (r) { r.chains.forEach(function (c) { chains[c] = (chains[c] || 0) + 1; }); });
     var famCount = function (f) { return R.rows.filter(function (r) { return r.family === f; }).length; };
     var vCount = function (v) { return R.rows.filter(function (r) { return r.plan.verdict === v; }).length; };
-    app.innerHTML = kpis() + '<div class="hgrid"><div class="lcol"><section class="card"><div class="plhead"><h3>Radar &middot; ' + R.rows.length + ' protocols that record no token</h3><span class="mute tiny">click a dot for its plan, a sector to filter</span></div>' + sweep() + '</section>' + howCard() + '</div>' +
+    app.innerHTML = kpis() + ledger() + '<div class="hgrid"><div class="lcol"><section class="card"><div class="plhead"><h3>Radar &middot; ' + R.rows.length + ' protocols that record no token</h3><span class="mute tiny">click a dot for its plan, a sector to filter</span></div>' + sweep() + '</section>' + howCard() + '</div>' +
       '<div class="rcol"><div class="formula">implied value = <b class="k-tvl">price if it launches(TVL)</b> &times; <b class="k-d">token odds(days with no token, TVL, 7-day growth, family)</b><span>price fitted on the ' + R.traded.length + ' tokens that already trade (never ranked); odds on the token record of ' + R.dated + ' dated protocols</span></div>' +
       '<div class="filters">' + chip('scope', 'all', 'All ' + R.rows.length) + chip('scope', 'watch', 'Watchlist ' + R.watch_n) + chip('scope', 'off', 'Off list &ge; floor') + chip('scope', 'early', 'Early &lt; $50M') +
       '<input type="search" id="q" placeholder="Search a protocol" value="' + esc(S.q) + '"></div>' +
@@ -183,37 +195,9 @@
     app.querySelector('#chain').onchange = function (e) { go({ chain: e.target.value }); };
   }
 
-  // ---- the portfolio planner
-  var span = function (a) { return a.length > 1 ? a[0] + '&ndash;' + a[a.length - 1] : String(a[0]); };
-
-  function planner() {
-    var P = plan(), o = P.opt, cap = o.hours * 60, hl = {};
-    P.picks.forEach(function (q) { hl[q.r.slug] = 1; });
-    var field = function (k, label, step) { return '<label>' + label + '<input type="number" min="1" step="' + step + '" data-in="' + k + '" value="' + o[k] + '"></label>'; };
-    var tile = function (v, k, sub) { return '<div><span>' + k + '</span><b>' + v + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</div>'; };
-    var weeks = P.load.map(function (m, i) { return '<th class="num">wk ' + (i + 1) + '</th>'; }).join('');
-    app.innerHTML = '<section class="card ptop"><div><h2>Farm portfolio planner</h2><p class="mute">From the ' + P.candidates + ' Worth farming and Marginal rows, <code>planPortfolio()</code> takes positions by expected drop per dollar of fees, income forgone and time (hours &times; your rate): one per protocol, at most ' + Math.round(o.family_cap * 100) + '% of the budget in one family, each started in the first of ' + o.starts + ' weeks that keeps every week under your hours cap.</p></div>' +
-      '<div class="inputs">' + field('budget', 'Budget, $', 500) + field('hours', 'Hours a week', 0.5) + field('rate', 'Your time, $/h', 5) + '</div></section>' +
-      '<section class="totals big">' + tile(P.picks.length, 'positions', money(P.deposit) + ' deployed') + tile(money(P.fees), 'fees and gas', 'every step, every chain') + tile(money(P.forgone), 'income forgone', Math.round(R.cfg.tbill * 100) + '% a year on the deposits') + tile(hrs(P.minutes), 'hands-on time', 'peak week ' + Math.round(Math.max.apply(0, P.load.concat(0))) + ' of ' + cap + ' min') +
-      tile(money(P.slice), 'expected drop', 'odds applied; band ' + money(P.lo) + '&ndash;' + money(P.hi)) + tile(P.slice ? Math.round((P.fees + P.forgone) / P.slice * 100) + '%' : '&ndash;', 'costs / expected drop', 'under 100% pays for the plan') + '</section>' +
-      (P.picks.length ? '' : '<p class="card warn">No position fits: a setup week takes about 70 minutes, so allow at least 1.5 hours a week and $' + o.min_fill + ' per position.</p>') +
-      '<div class="pgrid"><div><section class="card"><h3>Positions, in the order the greedy took them</h3><table class="mini"><thead><tr><th>#</th><th>Protocol</th><th class="num">Deposit</th><th>Chain</th><th class="num">Start</th><th class="num">Fees</th><th class="num">Forgone</th><th class="num">Time</th><th class="num">Expected drop (band)</th><th class="num">Drop / $</th></tr></thead><tbody>' +
-      P.picks.map(function (q, i) { return '<tr data-slug="' + esc(q.r.slug) + '"><td>' + (i + 1) + '</td><td><b>' + esc(q.r.name) + '</b> <span class="verdict ' + VCLASS[q.r.plan.verdict] + '">' + q.r.plan.verdict + '</span><small>' + esc(q.r.family) + ' &middot; rank ' + q.r.rank + ' &middot; ' + usd(q.r.implied) + '</small></td><td class="num">' + money(q.deposit) + '</td><td>' + esc(q.r.plan.chain) + '</td><td class="num">wk ' + (q.start + 1) + '</td><td class="num">' + money(q.fees) + '</td><td class="num">' + money(q.forgone) + '</td><td class="num">' + q.minutes + ' min</td><td class="num"><b class="val">' + money(q.slice) + '</b><small>' + money(q.lo) + '&ndash;' + money(q.hi) + '</small></td><td class="num">&times;' + q.score.toFixed(2) + '</td></tr>'; }).join('') + '</tbody></table></section>' +
-      '<section class="card"><h3>The combined schedule: which step of each plan falls in which week</h3><table class="cal"><thead><tr><th>Position</th>' + weeks + '</tr></thead><tbody>' +
-      P.picks.map(function (q) {
-        var cells = P.load.map(function (m, i) { var w = q.weeks[i - q.start]; return !w ? '<td></td>' : '<td class="on' + (w.steps.length ? ' st' : '') + '" title="' + Math.round(w.min) + ' min">' + (w.steps.length ? span(w.steps) : '&middot;') + '</td>'; }).join('');
-        return '<tr data-slug="' + esc(q.r.slug) + '"><td>' + esc(q.r.name) + '</td>' + cells + '</tr>';
-      }).join('') +
-      '<tr class="sum"><td>Minutes that week</td>' + P.load.map(function (m) { return '<td class="num' + (m > cap * 0.8 ? ' hot' : '') + '">' + Math.round(m) + '</td>'; }).join('') + '</tr></tbody></table>' +
-      '<p class="mute tiny">Numbers are the plan steps of each protocol\'s detail page (1&ndash;4 setup, 6 midway, 8 withdraw); &middot; is the 5-minute weekly check. The stop rule and the claim fire only on an event.</p></section></div>' +
-      '<div><section class="card"><h3>Chosen positions on the radar</h3>' + sweep(hl) + '</section></div></div>';
-    wire();
-    app.querySelectorAll('[data-in]').forEach(function (el) { el.onchange = function () { var x = {}; x[el.dataset.in] = el.value > 0 ? String(+el.value) : ''; go(x); }; });
-  }
-
   // ---- one protocol
   function detail(r) {
-    var p = r.plan, f = r.f, mine = P0.picks.filter(function (q) { return q.r === r; })[0];
+    var p = r.plan, f = r.f;
     var tile = function (v, k, cls) { return '<div class="tile ' + (cls || '') + '"><b>' + v + '</b><span>' + k + '</span></div>'; };
     app.innerHTML = '<a class="back" href="#">&larr; Board</a><div class="dhead"><h1>' + esc(r.name) + '</h1><span class="tag">records no token</span>' + (r.watch ? '<span class="tag watch">watchlist</span>' : '') + (r.sib ? '<span class="tag">its brand\'s $' + esc(r.sib) + ' trades</span>' : '') + '<span class="tag">' + esc(r.category) + '</span><span class="tag">' + esc(r.chains.slice(0, 4).join(' · ')) + '</span></div>' +
       '<div class="dgrid"><section class="card"><div class="hero"><div><span class="mute">Implied value, this model\'s claim</span><b class="big">' + usd(r.implied) + '</b></div>' +
@@ -223,7 +207,7 @@
       '<p class="mute tiny">Odds: peers like it (same TVL, growth, family) record a token ' + Math.round(f.now * 100) + '% of the time by its age and ' + Math.round(f.end * 100) + '% by ' + R.ceiling.toFixed(1) + ' years, so (' + Math.round(f.end * 100) + ' &minus; ' + Math.round(f.now * 100) + ') / (100 &minus; ' + Math.round(f.now * 100) + ') = ' + Math.round(r.odds * 100) + '% of the ones still without one get there. The peers\' record, not a forecast.</p>' +
       '<h3>The farm arithmetic</h3><div class="arith">Drop if a token launches = ' + Math.round(R.cfg.drop_share * 100) + '% airdrop &times; ' + usd(r.launch) + ' &times; ' + money(p.deposit) + ' / (' + usd(r.tvl) + ' TVL + ' + money(p.deposit) + ') = <b>' + money(p.launch) + '</b>; expected drop = &times; ' + Math.round(r.odds * 100) + '% odds = <b>' + money(p.slice) + '</b><br>Break-even = (' + money(p.fees) + ' fees + ' + money(p.forgone) + ' income forgone at ' + Math.round(R.cfg.tbill * 100) + '% a year for ' + p.weeks + ' weeks) / ' + money(p.launch) + ' = <b>' + Math.round(p.odds * 100) + '%</b> odds, against the model\'s <b>' + Math.round(r.odds * 100) + '%</b>. With the price at the band\'s ends: ' + Math.round(p.odds_hi * 100) + '% to ' + Math.round(p.odds_lo * 100) + '%.</div>' +
       '<p class="mute">' + (r.odds >= p.odds_lo ? 'Worth farming: the odds clear the break-even even at the band\'s low price.' : r.odds < p.odds ? 'A skip: the odds sit below the break-even at the point price.' : 'Marginal: the odds clear the break-even only above the band\'s low price; size the deposit down or wait for a points page.') + '</p>' +
-      '<div class="inplan">' + (mine ? 'In the default <a href="#view=plan">portfolio</a>: ' + money(mine.deposit) + ' from week ' + (mine.start + 1) + ', slice ' + money(mine.slice) + '.' : 'Not in the default <a href="#view=plan">' + money(P0.opt.budget) + ' portfolio</a>' + (p.verdict === 'Skip' ? ': a Skip.' : ': other rows pay more per dollar and hour.')) + '</div></section>' +
+      '</section>' +
       '<section class="card"><div class="plhead"><h3>Farm plan &middot; ' + esc(p.chain) + ' &middot; ' + money(p.deposit) + ' &middot; ' + p.weeks + ' weeks</h3><span class="verdict ' + VCLASS[p.verdict] + '">' + p.verdict + '</span></div>' + '<p class="stopline">Stop rule, any day: exit if TVL closes under ' + money(p.stop) + '</p>' +
       '<table class="plan"><thead><tr><th>#</th><th>When</th><th>Step</th><th class="num">Cost</th><th class="num">Time</th></tr></thead><tbody>' +
       p.steps.map(function (s, i) { return '<tr' + (/^Stop rule/.test(s.text) ? ' class="stoprow"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(s.when) + '</td><td>' + esc(s.text) + '</td><td class="num">' + money(s.cost) + '</td><td class="num">' + s.min + ' min</td></tr>'; }).join('') + '</tbody></table>' +
@@ -232,9 +216,8 @@
   }
 
   function render() {
-    document.querySelectorAll('.tabs button').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.view === S.view && !S.p)); b.onclick = function () { go({ view: b.dataset.view, p: '' }); }; });
     var r = S.p && bySlug[S.p];
-    if (r) detail(r); else if (S.view === 'plan') planner(); else board();
+    if (r) detail(r); else board();
     var back = app.querySelector('.back'); if (back) back.onclick = function (e) { e.preventDefault(); go({ p: '' }); };
     window.scrollTo(0, 0);
   }

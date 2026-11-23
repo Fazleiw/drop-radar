@@ -2,7 +2,7 @@
 //
 // The model lives in dashboard/model.js, the same file the page runs: main.ts requires it, builds the
 // radar from the sealed snapshot, checks the board against the gate's rules, and writes
-//   /output/board.json   the ranked rows (slug, name, rank, implied_value_usd, farm_steps) and the default portfolio
+//   /output/board.json   the ranked rows (slug, name, rank, implied_value_usd, farm_steps)
 //   /output/data.js      the snapshot and board.json, for the page to recompute and compare
 //   /output/dashboard/   the page; /output/screenshots/; /output/dossier.json (vendored library), last.
 //
@@ -66,15 +66,7 @@ const rows: BoardRow[] = DropRadar.boardRows(radar);
 const issue = boardIssue(rows, snapshot);
 if (issue !== null) fail(`the board would fail the gate: ${issue}`);
 
-// The default farm portfolio ($10,000, 3 hours a week), so the planner's screenshot has a file behind it too.
-const pf = DropRadar.planPortfolio(radar);
-const portfolio = {
-  budget: pf.opt.budget, hours_per_week: pf.opt.hours, time_usd_per_hour: pf.opt.rate,
-  picks: pf.picks.map((q: { r: { slug: string }; deposit: number; start: number }) => `${q.r.slug}:${q.deposit}:${q.start}`),
-  deposit_usd: pf.deposit, fees_usd: Math.round(pf.fees), forgone_usd: Math.round(pf.forgone), minutes: pf.minutes,
-  expected_drop_usd: Math.round(pf.slice), drop_band_usd: [Math.round(pf.lo), Math.round(pf.hi)],
-};
-const board = { model: radar.cfg.version, as_of: snapshot.as_of, portfolio, rows };
+const board = { model: radar.cfg.version, as_of: snapshot.as_of, rows };
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify(board)}\n`);
 writeFileSync(join(out, 'data.js'), `window.SNAPSHOT=${JSON.stringify(snapshot)};\nwindow.BOARD=${JSON.stringify(board)};\n`);
@@ -107,5 +99,5 @@ const price = radar.price[radar.pk].test, odds = radar.oddsTests.filter((s: { ke
 process.stdout.write(
   `drop radar: ${radar.universe} protocols, ${radar.traded.length} traded anchors, ${rows.length} pre-token rows, ${radar.set_aside} set aside; ` +
     `price miss x${price.first.miss.toFixed(2)} one out, x${price.walk.miss.toFixed(2)} older to newer; odds Brier ${odds.first.brier.toFixed(3)} / ${odds.walk.brier.toFixed(3)}; ` +
-    `portfolio ${pf.picks.length} positions; ${pages.length} page files, ${shots.length} screenshots\n`,
+    `ledger ${Object.values(radar.ledger).reduce((a: number, b: unknown) => a + (b as number), 0)} of ${radar.universe}; ${pages.length} page files, ${shots.length} screenshots\n`,
 );

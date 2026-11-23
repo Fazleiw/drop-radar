@@ -5,7 +5,7 @@
   'use strict';
 
   var CFG = {
-    version: 'drop-radar-7',
+    version: 'drop-radar-8',
     shrink_k: 4, ridge: 0.5, fam_ridge: 8, ceiling_q: 0.95, odds_floor: 0.03,
     drop_share: 0.10,     // airdrop share of the launch value
     tbill: 0.04,          // income a deposit forgoes, per year
@@ -13,7 +13,10 @@
   };
 
   var FAMILIES = ['Vaults & yield', 'Lending & CDP', 'Trading', 'RWA & stables', 'Staking', 'Infra & chains', 'Other'];
-  var EXCLUDED = { 'CEX': 1, 'Bridge': 1, 'Canonical Bridge': 1, 'Liquid Staking': 1, 'Liquid Restaking': 1, 'Restaked BTC': 1, 'Stablecoin Wrapper': 1 };
+  var STAKED = { 'Liquid Staking': 1, 'Liquid Restaking': 1, 'Restaked BTC': 1 };
+  // Every snapshot protocol lands in exactly one of these groups (buildRadar counts them; the page sums them to the universe).
+  var LEDGER = ['Ranked: watchlist', 'Ranked: off the list', 'Ranked: early, under the floor', 'Token trades: prices the launch', 'Token on record, no usable cap',
+    'Out: exchange', 'Out: bridge', 'Out: staked form', 'Out: wrapped or versioned', 'Out: brand\'s token trades', 'No TVL'];
 
   function familyOf(cat) {
     var c = String(cat || '').toLowerCase();
@@ -28,12 +31,15 @@
 
   function isPreToken(p) { return p.mcap_usd === null && p.gecko_id === null && p.symbol === null; }
 
-  /** The house product rule minus its TVL floor, plus stablecoin wrappers and restaking of a liquid-staked token. */
-  function isProduct(p, staked) {
-    if (EXCLUDED[p.category]) return true;
-    if (p.category === 'Restaking' && p.slug.split('-').some(function (s) { return staked[s]; })) return true;
-    if (/^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)\b/i.test(p.name)) return true;
-    return /\b(wrapped|staked|staking)\b/i.test(p.name) || /\s(v\d+|\d+\.\d+)$/i.test(p.name);
+  /** Why a protocol is a product of a token that trades, '' when it is not: the house rule minus its TVL floor, plus
+   *  stablecoin wrappers and restaking of a liquid-staked token. */
+  function productOf(p, staked) {
+    var c = p.category || '', n = p.name;
+    if (c === 'CEX' || /^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)\b/i.test(n)) return 'exchange';
+    if (c === 'Bridge' || c === 'Canonical Bridge') return 'bridge';
+    if (STAKED[c] || /\b(staked|staking)\b/i.test(n) || (c === 'Restaking' && p.slug.split('-').some(function (s) { return staked[s]; }))) return 'staked form';
+    if (c === 'Stablecoin Wrapper' || /\bwrapped\b/i.test(n) || /\s(v\d+|\d+\.\d+)$/i.test(n)) return 'wrapped or versioned';
+    return '';
   }
 
   var L = function (x) { return Math.log(x) / Math.LN10; };
@@ -191,50 +197,6 @@
       odds_lo: beLo, odds_hi: be * r.implied / r.hi };
   }
 
-  // ---------------------------------------------------------------- the portfolio
-  var PF = { budget: 10000, hours: 3, rate: 25, family_cap: 0.25, starts: 4, min_fill: 250, tvl_cap: 0.001 };
-
-  /** Minutes a plan asks for in each week of its hold: dated steps in week floor(day / 7), the check every week. */
-  function weekLoad(plan) {
-    var w = [];
-    for (var k = 0; k <= plan.weeks; k++) w.push({ min: 0, steps: [] });
-    plan.steps.forEach(function (s, i) {
-      if (s.weekly) for (k = 0; k < plan.weeks; k++) w[k].min += s.min / plan.weeks;
-      else if (s.at !== undefined) { w[Math.floor(s.at / 7)].min += s.min; w[Math.floor(s.at / 7)].steps.push(i + 1); }
-    });
-    return w;
-  }
-
-  /** Greedy plan: Worth farming and Marginal rows by expected drop per $ of fees + income forgone + time (hours x rate),
-   *  one per protocol, at most family_cap of the budget per family, started in the first of `starts` weeks that keeps
-   *  every week of the combined schedule under the hours cap. */
-  function planPortfolio(radar, opt) {
-    var o = {}, k;
-    for (k in PF) o[k] = opt && opt[k] > 0 ? +opt[k] : PF[k];
-    var cap = o.hours * 60, load = [], fam = {}, left = o.budget, picks = [];
-    var cand = radar.rows.filter(function (r) { return r.plan.verdict !== 'Skip'; }).map(function (r) {
-      var p = r.plan; return { r: r, score: p.slice / (p.fees + p.forgone + p.minutes / 60 * o.rate) };
-    }).sort(function (a, b) { return b.score - a.score || a.r.rank - b.r.rank; });
-    cand.forEach(function (c) {
-      var r = c.r, p = r.plan, room = Math.min(left, o.budget * o.family_cap - (fam[r.family] || 0));
-      var dep = Math.floor(Math.min(p.deposit * o.budget / PF.budget, r.tvl * o.tvl_cap, room) / 50) * 50;
-      var x = dep / p.deposit, slice = p.slice * x, forgone = p.forgone * x;
-      if (dep < o.min_fill || p.fees + forgone > slice) return;   // too small, or fees eat the smaller slice
-      var wl = weekLoad(p), start = -1;
-      for (var s = 0; s < o.starts && start < 0; s++) {
-        if (wl.every(function (w, i) { return (load[s + i] || 0) + w.min <= cap; })) start = s;
-      }
-      if (start < 0) return;
-      wl.forEach(function (w, i) { load[start + i] = (load[start + i] || 0) + w.min; });
-      fam[r.family] = (fam[r.family] || 0) + dep; left -= dep;
-      picks.push({ r: r, score: c.score, deposit: dep, start: start, weeks: wl, fees: p.fees, forgone: forgone, minutes: p.minutes, slice: slice, lo: slice * r.lo / r.implied, hi: slice * r.hi / r.implied });
-    });
-    var sum = function (f) { return picks.reduce(function (t, q) { return t + q[f]; }, 0); };
-    for (k = 0; k < load.length; k++) load[k] = load[k] || 0;
-    return { opt: o, picks: picks, candidates: cand.length, load: load,
-      deposit: sum('deposit'), fees: sum('fees'), forgone: sum('forgone'), minutes: sum('minutes'), slice: sum('slice'), lo: sum('lo'), hi: sum('hi') };
-  }
-
   function stepText(s) { return s.when + ': ' + s.text + ' (cost ' + money(s.cost) + ', ' + s.min + ' min)'; }
 
   // ---------------------------------------------------------------- the board
@@ -261,9 +223,14 @@
     price.forEach(function (s, k) { if (!k) return; var c = price[pk].test; s.kept = s.test.first.miss < c.first.miss && s.test.walk.miss < c.walk.miss; if (s.kept) pk = k; });
     var fit = fitPrice(pts, pk), loo = price[pk].test.first;
     var bandLo = quantile(loo.err, 0.25), bandHi = quantile(loo.err, 0.75);
+    // Is the printed band honest? The share of held-out misses inside the P25..P75 and P10..P90 of the one-out misses.
+    var cover = [0.25, 0.1].map(function (q) {
+      var a = quantile(loo.err, q), z = quantile(loo.err, 1 - q), inside = function (e) { return e.filter(function (x) { return x >= a && x <= z; }).length / e.length; };
+      return { stated: 1 - 2 * q, first: inside(loo.err), walk: inside(price[pk].test.walk.err) };
+    });
 
     // odds: every dated protocol that is not a product, token recorded or not
-    var us = snap.protocols.filter(function (p) { return p.listed_at && p.tvl_usd > 0 && !isProduct(p, staked); }).map(function (p) { return Object.assign({ y: isPreToken(p) ? 0 : 1 }, bySlug[p.slug]); });
+    var us = snap.protocols.filter(function (p) { return p.listed_at && p.tvl_usd > 0 && !productOf(p, staked); }).map(function (p) { return Object.assign({ y: isPreToken(p) ? 0 : 1 }, bySlug[p.slug]); });
     var cur = { name: 'base rate of peers', t: {}, test: heldOut(us, {}, oddsScore) }, odds = [cur];
     ODDS.forEach(function (term) {
       var t = Object.assign({}, cur.t); t[term] = 1;
@@ -277,11 +244,15 @@
     // a brand whose token trades: another product line of it (same first word of the name) is set aside off the list
     var brand = {}, word = function (n) { var x = n.toLowerCase().split(/[\s-]/)[0]; return x.length > 2 ? x : ''; };
     snap.protocols.forEach(function (p) { if (!isPreToken(p) && p.symbol && word(p.name)) brand[word(p.name)] = p.symbol; });
-    var rows = [], setAside = 0;
+    var rows = [], setAside = 0, ledger = {}, put = function (k) { ledger[k] = (ledger[k] || 0) + 1; };
     snap.protocols.forEach(function (p) {
-      var w = !!watch[p.slug], sib = brand[word(p.name)] || '';
-      if (!w && (!isPreToken(p) || !(p.tvl_usd > 0))) return;
-      if (!w && (sib || isProduct(p, staked))) { setAside++; return; }
+      var w = !!watch[p.slug], sib = brand[word(p.name)] || '', why = productOf(p, staked);
+      if (!w) {
+        if (!isPreToken(p)) return put(p.mcap_usd > 0 ? LEDGER[3] : LEDGER[4]);
+        if (!(p.tvl_usd > 0)) return put(LEDGER[10]);
+        if (why || sib) { setAside++; return put('Out: ' + (why || 'brand\'s token trades')); }
+      }
+      put(LEDGER[w ? 0 : p.tvl_usd >= snap.floor_usd ? 1 : 2]);
       var u = bySlug[p.slug], fam = u.fam;
       var size = Math.pow(10, fit.curve.a + fit.curve.b * u.x), launch = Math.pow(10, priceLog(fit, u));
       var o = tokenOdds(om, u, ceiling), q = o.q, implied = Math.max(1, Math.round(launch * q));
@@ -304,14 +275,14 @@
 
 
     return { cfg: CFG, as_of: asOf, source: snap.source, floor: snap.floor_usd, universe: snap.protocols.length, watch_n: snap.watchlist.length,
-      set_aside: setAside, fit: fit, price: price, pk: pk, oddsTests: odds, om: om, ceiling: ceiling, share: share, dated: us.length, band: [bandLo, bandHi], traded: pts, rows: rows };
+      set_aside: setAside, ledger: ledger, cover: cover, fit: fit, price: price, pk: pk, oddsTests: odds, om: om, ceiling: ceiling, share: share, dated: us.length, band: [bandLo, bandHi], traded: pts, rows: rows };
   }
 
   function boardRows(radar) {
     return radar.rows.map(function (r) { return { slug: r.slug, name: r.name, rank: r.rank, implied_value_usd: r.implied, farm_steps: r.plan.steps.map(stepText) }; });
   }
 
-  var api = { CFG: CFG, PF: PF, FAMILIES: FAMILIES, familyOf: familyOf, buildRadar: buildRadar, boardRows: boardRows, planPortfolio: planPortfolio, weekLoad: weekLoad, money: money, priceLog: priceLog };
+  var api = { CFG: CFG, FAMILIES: FAMILIES, LEDGER: LEDGER, familyOf: familyOf, buildRadar: buildRadar, boardRows: boardRows, money: money, priceLog: priceLog };
   root.DropRadar = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
